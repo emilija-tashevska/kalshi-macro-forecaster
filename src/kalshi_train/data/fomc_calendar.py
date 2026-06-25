@@ -8,13 +8,14 @@ archive plus recent calendar pages.
 
 from __future__ import annotations
 
+import sqlite3
 from datetime import date, datetime
 from functools import lru_cache
 from pathlib import Path
 
 import pandas as pd
 
-from kalshi_train.config import PROJECT_ROOT
+from kalshi_train.config import PROJECT_ROOT, settings
 from kalshi_train.db.connection import connect
 
 DateLike = date | datetime | str
@@ -49,18 +50,29 @@ def _load_calendar_from_db(
     start: date,
     end: date,
 ) -> tuple[date, ...]:
-    """Load FOMC dates from ``event_calendar`` when Phase 1.6 has run."""
-    with connect(db_path, read_only=True) as conn:
-        rows = conn.execute(
-            """
-            SELECT DISTINCT date(release_date) AS meeting_date
-            FROM event_calendar
-            WHERE template_id = 'fed_decision'
-              AND date(release_date) BETWEEN :start AND :end
-            ORDER BY meeting_date
-            """,
-            {"start": start.isoformat(), "end": end.isoformat()},
-        ).fetchall()
+    """Load FOMC dates from ``event_calendar`` when Phase 1.6 has run.
+
+    Returns ``()`` (so callers fall back to the static file) when the DB
+    file does not exist yet or the table hasn't been created — this keeps
+    ``prefer_db=True`` safe to use before any ingestion has happened.
+    """
+    path = db_path or settings.kalshi_train_db_path
+    if not Path(path).exists():
+        return ()
+    try:
+        with connect(db_path, read_only=True) as conn:
+            rows = conn.execute(
+                """
+                SELECT DISTINCT date(release_date) AS meeting_date
+                FROM event_calendar
+                WHERE template_id = 'fed_decision'
+                  AND date(release_date) BETWEEN :start AND :end
+                ORDER BY meeting_date
+                """,
+                {"start": start.isoformat(), "end": end.isoformat()},
+            ).fetchall()
+    except sqlite3.OperationalError:
+        return ()
     if not rows:
         return ()
     return tuple(date.fromisoformat(r["meeting_date"]) for r in rows)

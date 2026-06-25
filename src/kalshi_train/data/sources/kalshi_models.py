@@ -95,3 +95,55 @@ class Candlestick(BaseModel):
     volume_fp: str | None = None
     open_interest: str | int | float | None = None
     open_interest_fp: str | None = None
+
+
+class KalshiMarketModel(BaseModel):
+    """A Kalshi market object as returned by ``/markets`` (subset).
+
+    ``extra="ignore"`` keeps us tolerant of the many fields we don't
+    persist and of the API's gradual shape changes.
+    """
+
+    model_config = ConfigDict(extra="ignore")
+
+    ticker: str
+    event_ticker: str = ""
+    series_ticker: str = ""
+    market_type: str = ""
+    title: str = ""
+    subtitle: str = ""
+    yes_sub_title: str = ""
+    no_sub_title: str = ""
+    rules_primary: str = ""
+    rules_secondary: str = ""
+    open_time: str | None = None
+    close_time: str | None = None
+    expiration_time: str | None = None
+    settlement_time: str | None = None
+    status: str = ""
+    result: str = ""
+    last_price: str | int | float | None = None
+    settlement_value: str | int | float | None = None
+    volume: str | int | float | None = None
+    open_interest: str | int | float | None = None
+
+    def derived_series_ticker(self) -> str:
+        """Kalshi market objects don't always carry ``series_ticker``; it's
+        the token before the first dash of the event ticker (``FED-24JAN`` →
+        ``FED``)."""
+        if self.series_ticker:
+            return self.series_ticker
+        base = self.event_ticker or self.ticker
+        return base.split("-", 1)[0]
+
+    def last_price_dollars(self) -> str:
+        return _to_dollar_str(self.last_price) or "0.0000"
+
+    def settlement_value_dollars(self) -> str | None:
+        return _to_dollar_str(self.settlement_value)
+
+    def volume_str(self) -> str:
+        return "0.00" if self.volume is None else f"{float(self.volume):.2f}"
+
+    def open_interest_str(self) -> str:
+        return "0.00" if self.open_interest is None else f"{float(self.open_interest):.2f}"

@@ -2,7 +2,7 @@
 
 A learning project: train a fine-tuned LLM to make calibrated probabilistic forecasts on Kalshi macroeconomic markets (Fed decisions, CPI, employment, GDP, yields, recessions) — and rigorously measure whether it beats vanilla LLMs, classical ML baselines, and the market itself.
 
-> **Status:** Phase 1.2 — FRED/ALFRED ingestion pipeline built. Awaiting FRED API key to populate the DB with real data.
+> **Status:** Phase 1 data layer code-complete through 1.6 — numeric (FRED/SPF), text corpus (Fed statements/minutes/Beige Book), markets (Kalshi + Polymarket), and the event calendar are all built and tested. Phase 2 XGBoost baseline prototyped. Remaining: add the FRED API key to populate numeric data, then Phase 1.7 (data-quality dashboard). 94 unit tests passing.
 
 ---
 
@@ -147,32 +147,47 @@ This phase is the longest and most important. We will execute it in sub-phases s
 
 **Checkpoint:** verify all ~71 series have data with full date ranges.
 
-#### Phase 1.4 — Text corpus ingestion
+#### Phase 1.4 — Text corpus ingestion ✓ CODE COMPLETE
 
-- FOMC statements + implementation notes scraper (federalreserve.gov).
-- FOMC minutes + press conference transcripts.
-- Beige Book scraper.
-- SEP (dot plot + projections) scraper.
-- Fed governor speeches scraper.
-- BLS / BEA release narrative scrapers.
-- ECB / BoE / BoJ statement scrapers.
+Federal Reserve communications, fetched via deterministic URLs (no key):
 
-**Checkpoint:** spot-check some statements; verify count of ~5,000 documents stored.
+- ✓ FOMC statement scraper — URLs derived from the FOMC calendar (reuses Phase 1.6).
+- ✓ FOMC minutes scraper — same calendar, with an approximate +21-day publication date.
+- ✓ Beige Book scraper — probes all release months.
+- ✓ Async `FedTextClient` (404 → `None` so candidate URLs can be safely probed) + pure, testable HTML parsers (`data/sources/fed_text.py`).
+- ✓ Clean body extraction (strips nav/script/footer) + dedup via `body_hash` + automatic FTS5 indexing.
+- ✓ CLI: `kalshi-train ingest text [--type fomc_statement|fomc_minutes|beige_book] [--start --end --limit]`.
+- ✓ Per-document **ordered URL fallbacks** to handle the Fed's era-specific schemes and 2-day meetings (statement/minutes filename uses the meeting's *last* day): modern `pressreleases` + legacy `boarddocs` paths, each tried for the listed date and date+1.
+- ✓ 9 unit tests (HTML fixtures, parser, probe-and-skip, idempotency, FTS search). **Verified live — full 2000→2025 backfill**: 504 documents stored (222 FOMC statements, 207 minutes, 75 Beige Books), all FTS-searchable.
 
-#### Phase 1.5 — Kalshi & Polymarket ingestion
+> Known gap: Beige Books before 2017 use legacy exact-date URLs we don't yet generate (only 2017+ captured). SEP projections, Fed speeches, and ECB/BoE/BLS/BEA narratives are deferred; the source-dispatch design makes each a single added URL builder + parser.
 
-- Lift the Kalshi client from Black Swan with our modifications (no AI summaries, no black-swan filter — we want all macro markets).
-- Filter to macro categories matching our 7 question templates.
-- Polymarket subgraph client for macro markets (longer history pre-Kalshi).
+**Checkpoint:** `kalshi-train ingest text` stores clean statement/minutes/Beige Book text, searchable via `text_documents_fts`.
 
-**Checkpoint:** count of Kalshi macro markets per question template.
+#### Phase 1.5 — Kalshi & Polymarket ingestion ✓ CODE COMPLETE
 
-#### Phase 1.6 — Calendar / event metadata
+- ✓ Wired the Phase-0 Kalshi client into a real ingestor (`data/ingest_kalshi.py`): market metadata → `kalshi_markets`, daily candlesticks → `kalshi_price_history` (the market-implied probability series).
+- ✓ Macro **allowlist + classifier** (`data/kalshi_macro.py`): series-prefix and title-keyword matching maps markets to our 7 templates and parses strikes (above/below/between). Uses the live `KX`-prefixed series (`KXFED`, `KXCPI`, `KXCPIYOY`, `KXU3`, `KXPAYROLLS`, `KXGDP`).
+- ✓ Candlesticks use the working series-scoped endpoint (the bare `/historical` path 404s).
+- ✓ Polymarket Gamma client (`data/sources/polymarket.py`, keyless) + ingestor → `polymarket_markets`, with best-effort resolution parsing.
+- ✓ CLI: `kalshi-train ingest kalshi [--series ... --status --no-prices --max]`, `kalshi-train ingest polymarket [--max]`.
+- ✓ 10 unit tests (classifier, strike parsing, flattening, candlestick mapping, resolution, idempotency). **Verified live**: 172 Kalshi macro markets across 5 templates; 733 candlestick rows for GDP markets; 30 Polymarket macro markets from 966 scanned.
 
-- Economic release calendar with consensus + actual + surprise (Trading Economics free tier or DBnomics).
-- FOMC meeting schedule with decisions.
+**Checkpoint:** `kalshi-train db-info` shows macro markets per template in `kalshi_markets`, with price history in `kalshi_price_history`.
 
-**Checkpoint:** verify each release in the database has a corresponding calendar entry.
+#### Phase 1.6 — Calendar / event metadata ✓ CODE COMPLETE
+
+Built *from data we already hold* — no new API key needed:
+
+- ✓ Economic release calendar derived from `series_observations`: each period's **first print** (earliest vintage) becomes an `event_calendar` row with `actual_value`, `release_date`, `observation_date` (`data/calendar_registry.py` + `data/ingest_calendar.py`).
+- ✓ `surprise = actual - consensus` where a same-frequency forecast exists (real GDP `GDPC1` vs SPF nowcast `SPF_RGDP_MEDIAN_NOWCAST`). Monthly prints leave consensus NULL until a release-consensus feed (DBnomics / Trading Economics) is wired.
+- ✓ FOMC meeting schedule → one `fed_decision` row per meeting, decision classified cut / hold / hike from `DFEDTARU` via the PIT interface. This closes the Phase 2 loop: `fomc_calendar.fomc_meeting_dates` now prefers `event_calendar` over the static fallback.
+- ✓ CLI: `kalshi-train ingest calendar [--start DATE] [--end DATE] [--skip-releases] [--skip-fomc]`.
+- ✓ 7 unit tests on a synthetic DB (first-print vs revision, surprise math, decision classification, idempotency, DB-preferred FOMC dates).
+
+**Checkpoint:** `kalshi-train ingest calendar` populates the FOMC schedule immediately; release events fill in once `ingest fred` / `ingest spf` have run, so every ingested release maps to a calendar entry by construction.
+
+> **Note on sequencing:** Phase 2 (XGBoost) was built early as an end-to-end vertical slice, ahead of sub-phases 1.4–1.6. Those are now complete; the data layer is back in order.
 
 #### Phase 1.7 — Data quality dashboard
 

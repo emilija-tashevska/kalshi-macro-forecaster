@@ -8,6 +8,10 @@ Available subcommands:
     kalshi-train pit-history SERIES_ID --start --end    (PIT timeline)
     kalshi-train ingest fred [OPTIONS]                  (Phase 1.2 FRED ingest)
     kalshi-train ingest spf                             (Phase 1.3 SPF ingest)
+    kalshi-train ingest text [OPTIONS]                  (Phase 1.4 Fed text corpus)
+    kalshi-train ingest kalshi [OPTIONS]               (Phase 1.5 Kalshi markets)
+    kalshi-train ingest polymarket [OPTIONS]           (Phase 1.5 Polymarket markets)
+    kalshi-train ingest calendar [OPTIONS]              (Phase 1.6 event calendar)
     kalshi-train train fed-cut [OPTIONS]                (Phase 2 XGBoost baseline)
 
 More subcommands arrive as we hit each phase.
@@ -26,8 +30,13 @@ from rich.table import Table
 
 from kalshi_train import __version__
 from kalshi_train.config import settings
+from kalshi_train.data.ingest_calendar import run_calendar_ingest
 from kalshi_train.data.ingest_fred import run_fred_ingest
+from kalshi_train.data.ingest_kalshi import run_kalshi_ingest
+from kalshi_train.data.ingest_polymarket import run_polymarket_ingest
 from kalshi_train.data.ingest_spf import run_spf_ingest
+from kalshi_train.data.ingest_text import ALL_DOC_TYPES, run_text_ingest
+from kalshi_train.data.kalshi_macro import DEFAULT_MACRO_SERIES_TICKERS
 from kalshi_train.db.connection import connect, init_schema
 from kalshi_train.db.point_in_time import (
     VintagePolicy,
@@ -273,6 +282,177 @@ def ingest_spf_cmd(
         f"[bold]Total:[/bold] {report.n_succeeded} ok, "
         f"{report.n_failed} failed, [green]{report.total_rows:,}[/green] rows."
     )
+
+
+@ingest_app.command("text")
+def ingest_text_cmd(
+    start: str = typer.Option("2000-01-01", "--start", help="Earliest document date (ISO)."),
+    end: str | None = typer.Option(None, "--end", help="Latest document date (default: today)."),
+    types: list[str] = typer.Option(  # noqa: B008
+        [],
+        "--type",
+        "-t",
+        help="Document types: fomc_statement, fomc_minutes, beige_book. Repeatable.",
+    ),
+    limit: int | None = typer.Option(None, "--limit", "-n", help="Probe at most N URLs."),
+    log_level: str = typer.Option("INFO", "--log-level", help="DEBUG/INFO/WARNING/ERROR."),
+) -> None:
+    """Scrape the Federal Reserve text corpus into ``text_documents``.
+
+    Builds deterministic URLs from the FOMC calendar (statements, minutes)
+    and probes Beige Book months, storing clean article text with an FTS
+    index. No API key required. Example::
+
+        kalshi-train ingest text --start 2015-01-01
+    """
+    _configure_logging(log_level)
+    doc_types = types or list(ALL_DOC_TYPES)
+    report = asyncio.run(
+        run_text_ingest(start=start, end=end, document_types=doc_types, limit=limit)
+    )
+
+    table = Table(title="Text ingest summary")
+    table.add_column("document_type", style="cyan")
+    table.add_column("stored", justify="right", style="green")
+    table.add_column("fetched", justify="right")
+    table.add_column("missing (404)", justify="right", style="dim")
+    table.add_column("status", style="dim")
+    for r in report.results:
+        table.add_row(
+            r.document_type,
+            f"{r.stored:,}",
+            f"{r.fetched:,}",
+            f"{r.missing:,}",
+            "ok" if r.success else "fail",
+        )
+    console.print(table)
+    console.print(f"[bold]Total stored:[/bold] [green]{report.total_stored:,}[/green] documents.")
+
+
+@ingest_app.command("kalshi")
+def ingest_kalshi_cmd(
+    series: list[str] = typer.Option(  # noqa: B008
+        [],
+        "--series",
+        "-s",
+        help="Restrict to these Kalshi series tickers (e.g. FED, CPIYOY). Repeatable.",
+    ),
+    status: str = typer.Option(
+        "settled", "--status", help="Market status filter (settled/open/'')."
+    ),
+    no_prices: bool = typer.Option(False, "--no-prices", help="Skip candlestick price history."),
+    max_markets: int | None = typer.Option(None, "--max", help="Stop after N markets seen."),
+    log_level: str = typer.Option("INFO", "--log-level", help="DEBUG/INFO/WARNING/ERROR."),
+) -> None:
+    """Ingest macro Kalshi markets + price history into the DB.
+
+    Keeps only markets matching our 7 question templates. Example::
+
+        kalshi-train ingest kalshi --series FED --series CPIYOY
+    """
+    _configure_logging(log_level)
+    series_tickers = series or list(DEFAULT_MACRO_SERIES_TICKERS)
+    report = asyncio.run(
+        run_kalshi_ingest(
+            series_tickers=series_tickers,
+            status=status or None,
+            with_prices=not no_prices,
+            max_markets=max_markets,
+        )
+    )
+
+    table = Table(title="Kalshi ingest summary")
+    table.add_column("template", style="cyan")
+    table.add_column("markets", justify="right", style="green")
+    for tid, n in sorted(report.by_template.items()):
+        table.add_row(tid, f"{n:,}")
+    console.print(table)
+    console.print(
+        f"[bold]{report.markets_seen:,}[/bold] seen, "
+        f"[green]{report.markets_stored:,}[/green] macro stored, "
+        f"{report.price_rows:,} price rows."
+    )
+
+
+@ingest_app.command("polymarket")
+def ingest_polymarket_cmd(
+    max_markets: int | None = typer.Option(None, "--max", help="Stop after N macro markets."),
+    log_level: str = typer.Option("INFO", "--log-level", help="DEBUG/INFO/WARNING/ERROR."),
+) -> None:
+    """Ingest macro Polymarket markets into the DB (Gamma API, no key).
+
+    Example::
+
+        kalshi-train ingest polymarket --max 500
+    """
+    _configure_logging(log_level)
+    report = asyncio.run(run_polymarket_ingest(max_markets=max_markets))
+
+    table = Table(title="Polymarket ingest summary")
+    table.add_column("template", style="cyan")
+    table.add_column("markets", justify="right", style="green")
+    for tid, n in sorted(report.by_template.items()):
+        table.add_row(tid, f"{n:,}")
+    console.print(table)
+    console.print(
+        f"[bold]{report.markets_seen:,}[/bold] seen, "
+        f"[green]{report.markets_stored:,}[/green] macro stored."
+    )
+
+
+@ingest_app.command("calendar")
+def ingest_calendar_cmd(
+    start: str = typer.Option("2000-01-01", "--start", help="Earliest event date (ISO)."),
+    end: str | None = typer.Option(None, "--end", help="Latest event date (default: today)."),
+    skip_releases: bool = typer.Option(
+        False, "--skip-releases", help="Only build FOMC decision events."
+    ),
+    skip_fomc: bool = typer.Option(
+        False, "--skip-fomc", help="Only build economic-release events."
+    ),
+    log_level: str = typer.Option("INFO", "--log-level", help="DEBUG/INFO/WARNING/ERROR."),
+) -> None:
+    """Build the economic-event calendar from already-ingested data.
+
+    Derives one row per economic release (actual = first print, plus
+    consensus + surprise where a same-frequency forecast exists) and one
+    row per FOMC meeting (decision = cut/hold/hike). No API key required.
+
+    Release events need FRED/SPF data already in the DB; FOMC events come
+    from the bundled meeting schedule and work immediately. Example::
+
+        kalshi-train ingest calendar
+    """
+    _configure_logging(log_level)
+    report = run_calendar_ingest(
+        start=start,
+        end=end,
+        include_releases=not skip_releases,
+        include_fomc=not skip_fomc,
+    )
+
+    table = Table(title="Calendar ingest summary")
+    table.add_column("group", style="cyan")
+    table.add_column("events", justify="right", style="green")
+    table.add_column("w/ consensus", justify="right")
+    table.add_column("status", style="dim")
+    for r in report.results:
+        table.add_row(
+            r.name,
+            f"{r.events:,}",
+            f"{r.with_consensus:,}",
+            "ok" if r.success else "fail",
+        )
+    console.print(table)
+    console.print(
+        f"[bold]Total:[/bold] [green]{report.total_events:,}[/green] events, "
+        f"{report.total_with_consensus:,} with consensus, {report.n_failed} groups failed."
+    )
+    if report.total_events == 0:
+        console.print(
+            "[yellow]No events written. Run [bold]ingest fred[/bold] / "
+            "[bold]ingest spf[/bold] first to populate release data.[/yellow]"
+        )
 
 
 DEFAULT_REPORT_PATH = Path("reports/phase2_xgboost.md")
