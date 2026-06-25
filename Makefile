@@ -2,7 +2,7 @@
 # All commands run via `uv` so they use the project-managed Python.
 
 .PHONY: help install dev-install sync lock test test-fast lint format typecheck check \
-        db-init db-shell db-summary db-browser clean clean-cache \
+        db-init db-shell db-summary db-browser data-push data-pull clean clean-cache \
         pre-commit-install pre-commit-run
 
 help:
@@ -27,6 +27,10 @@ help:
 	@echo "    db-shell           Open an interactive SQLite shell"
 	@echo "    db-summary         Print a one-shot DB summary report"
 	@echo "    db-browser         Launch Datasette read-only web UI on :8001"
+	@echo ""
+	@echo "  Data sync (set DATA_REMOTE, e.g. r2:bucket/kalshi_train.db.gz):"
+	@echo "    data-push          Compress + upload the DB snapshot via rclone"
+	@echo "    data-pull          Download + decompress the DB snapshot via rclone"
 	@echo ""
 	@echo "  Cleanup:"
 	@echo "    clean              Remove build / cache artifacts"
@@ -86,6 +90,42 @@ db-summary:
 db-browser:
 	@echo "Launching Datasette on http://localhost:8001 (read-only)."
 	uv run datasette serve $(DB_PATH) --port 8001 --immutable $(DB_PATH)
+
+# ── Data sync (cloud snapshot via rclone) ──────────────────────────────
+# The SQLite DB is gitignored. To move it between machines, snapshot it to
+# any rclone remote (Cloudflare R2 / Backblaze B2 / S3 / Google Drive).
+#
+#   1. Install rclone:  https://rclone.org/install/
+#   2. Configure a remote:  rclone config   (e.g. name it "r2")
+#   3. Point DATA_REMOTE at an object path, then push/pull:
+#        export DATA_REMOTE=r2:kalshi-train/kalshi_train.db.gz
+#        make data-push      # after running ingests, upload the snapshot
+#        make data-pull      # on another machine, download it
+#
+# Note: text + FRED data are reproducible via the ingest commands, but
+# Kalshi/Polymarket market data drifts over time — snapshot it here when
+# you need byte-identical data across machines (e.g. for Phase 3+ evals).
+DATA_REMOTE ?=
+
+data-push:
+	@test -n "$(DATA_REMOTE)" || { echo "Set DATA_REMOTE, e.g. r2:bucket/kalshi_train.db.gz"; exit 1; }
+	@command -v rclone >/dev/null || { echo "rclone not installed: https://rclone.org/install/"; exit 1; }
+	@test -f "$(DB_PATH)" || { echo "No DB at $(DB_PATH); run the ingest commands first."; exit 1; }
+	@echo "Compressing $(DB_PATH) and uploading to $(DATA_REMOTE)..."
+	@gzip -c "$(DB_PATH)" > "$(DB_PATH).gz"
+	@rclone copyto "$(DB_PATH).gz" "$(DATA_REMOTE)" --progress
+	@rm -f "$(DB_PATH).gz"
+	@echo "Pushed. Remember to update the snapshot date in docs/STATUS.md."
+
+data-pull:
+	@test -n "$(DATA_REMOTE)" || { echo "Set DATA_REMOTE, e.g. r2:bucket/kalshi_train.db.gz"; exit 1; }
+	@command -v rclone >/dev/null || { echo "rclone not installed: https://rclone.org/install/"; exit 1; }
+	@mkdir -p "$(dir $(DB_PATH))"
+	@echo "Downloading $(DATA_REMOTE) and decompressing to $(DB_PATH)..."
+	@rclone copyto "$(DATA_REMOTE)" "$(DB_PATH).gz" --progress
+	@gunzip -c "$(DB_PATH).gz" > "$(DB_PATH)"
+	@rm -f "$(DB_PATH).gz"
+	@echo "Pulled to $(DB_PATH)."
 
 # ── Cleanup ────────────────────────────────────────────────────────────
 

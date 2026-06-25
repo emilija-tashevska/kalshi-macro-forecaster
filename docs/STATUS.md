@@ -87,6 +87,39 @@ A full populate order: `fred → spf → text → kalshi → polymarket → cale
 
 ---
 
+## Working across machines (data sync)
+
+The SQLite DB (`data/kalshi_train.db`, ~26 MB) is **gitignored** and does
+not travel with the repo. Two ways to get it onto another machine:
+
+1. **Regenerate** — run the ingest commands above. Free, no infra. Text +
+   FRED data are deterministic. ⚠️ **Kalshi/Polymarket market data drifts**
+   over time (markets settle, candlesticks get truncated), so regeneration
+   does *not* reproduce a past market snapshot.
+
+2. **Cloud snapshot (recommended once data must be identical across
+   machines, e.g. Phase 3+ evals)** — push/pull a compressed snapshot to
+   any rclone remote (Cloudflare R2 / Backblaze B2 / S3 / Google Drive;
+   ~free at this size):
+
+   ```bash
+   # one-time on each machine
+   rclone config                      # create a remote, e.g. "r2"
+   export DATA_REMOTE=r2:kalshi-train/kalshi_train.db.gz
+
+   make data-push                     # after ingests, upload snapshot
+   make data-pull                     # on another machine, download it
+   ```
+
+   Record the snapshot date below when you push, so results stay traceable.
+
+   - **Latest snapshot:** _none pushed yet._
+
+Secrets (`.env`, incl. `FRED_API_KEY`) are gitignored — copy them to each
+machine manually; never commit them.
+
+---
+
 ## Quality
 
 - **Tests:** 94 unit tests passing; 4 integration tests auto-skip without
