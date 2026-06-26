@@ -9,6 +9,7 @@ import numpy as np
 import pandas as pd
 import xgboost as xgb
 from sklearn.impute import SimpleImputer
+from sklearn.linear_model import LogisticRegression
 
 from kalshi_train.eval.metrics import MetricReport, compute_metrics
 from kalshi_train.eval.splits import expanding_window_cv, split_xy
@@ -38,6 +39,19 @@ def _default_xgb_params() -> dict[str, Any]:
     }
 
 
+def _resolved_params(y: np.ndarray, xgb_params: dict[str, Any] | None) -> dict[str, Any]:
+    # NOTE: we deliberately do NOT use scale_pos_weight here. Class-weight
+    # reweighting optimizes balanced error but destroys probability
+    # calibration, which is exactly what our proper scoring rules (Brier,
+    # log loss) reward. We keep natural class frequencies and rely on
+    # post-hoc calibration instead.
+    _ = y
+    params = _default_xgb_params()
+    if xgb_params:
+        params.update(xgb_params)
+    return params
+
+
 def train_xgboost_temporal_cv(
     df: pd.DataFrame,
     feature_cols: list[str],
@@ -56,11 +70,9 @@ def train_xgboost_temporal_cv(
     oof = np.full(len(ordered), np.nan)
     fold_metrics: list[MetricReport] = []
     importances = np.zeros(len(feature_cols), dtype=float)
-    params = _default_xgb_params()
-    if xgb_params:
-        params.update(xgb_params)
 
     for fold_idx, (train_idx, test_idx) in enumerate(tscv.split(x_imputed)):
+        params = _resolved_params(y[train_idx], xgb_params)
         model = xgb.XGBClassifier(**params)
         model.fit(x_imputed[train_idx], y[train_idx])
         probs = model.predict_proba(x_imputed[test_idx])[:, 1]
@@ -94,9 +106,7 @@ def train_xgboost_final(
     x, y = split_xy(train_df, feature_cols, label_col=label_col)
     imputer = SimpleImputer(strategy="median", keep_empty_features=True)
     x_imputed = imputer.fit_transform(x)
-    params = _default_xgb_params()
-    if xgb_params:
-        params.update(xgb_params)
+    params = _resolved_params(y, xgb_params)
     model = xgb.XGBClassifier(**params)
     model.fit(x_imputed, y)
     return model, imputer
@@ -109,4 +119,41 @@ def predict_proba(
     feature_cols: list[str],
 ) -> np.ndarray:
     x = imputer.transform(df[feature_cols].to_numpy(dtype=float))
-    return model.predict_proba(x)[:, 1]
+    probs: np.ndarray = model.predict_proba(x)[:, 1]
+    return probs
+
+
+# ── Probability calibration (Platt scaling) ────────────────────────────
+
+
+def _to_logit(probs: np.ndarray) -> np.ndarray:
+    p = np.clip(np.asarray(probs, dtype=float), 1e-6, 1.0 - 1e-6)
+    logit = np.asarray(np.log(p / (1.0 - p)), dtype=float)
+    return logit.reshape(-1, 1)
+
+
+def fit_platt_calibrator(
+    probs: np.ndarray, labels: np.ndarray
+) -> LogisticRegression | None:
+    """Fit Platt scaling (1-D logistic on the logit of the model output).
+
+    Calibrate on a held-out split (e.g. validation) whose period matches
+    the test period, to correct over/under-confidence. Returns ``None``
+    when the calibration set has a single class (can't fit), so the caller
+    falls back to raw probabilities.
+    """
+    if len(np.unique(labels)) < 2:
+        return None
+    lr = LogisticRegression()
+    lr.fit(_to_logit(probs), labels)
+    return lr
+
+
+def apply_calibrator(
+    calibrator: LogisticRegression | None, probs: np.ndarray
+) -> np.ndarray:
+    """Apply a fitted Platt calibrator; identity when ``calibrator`` is None."""
+    if calibrator is None:
+        return probs
+    calibrated: np.ndarray = calibrator.predict_proba(_to_logit(probs))[:, 1]
+    return calibrated

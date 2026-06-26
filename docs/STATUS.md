@@ -20,8 +20,13 @@ actually in the database. For the full plan and per-phase detail, see the
 - The DB now holds **~369k numeric vintage rows, 550 text documents, 172
   Kalshi markets + 20k price rows, ~1.6k Polymarket markets (1.5k
   resolved), and 4.9k calendar events** (see table below).
-- **Next:** train Phase 2 for real (first baseline metrics), then Phase 3
-  (LLM baseline).
+- **Phase 2 trained** (`reports/phase2_xgboost.md`): honest negative —
+  XGBoost beats coin-flip but **loses to the base-rate** on Brier/log loss.
+  Cause is non-stationarity (recent window has a far higher cut rate than
+  history); `scale_pos_weight` and post-hoc calibration were both tried and
+  did not help. Calibration infra is kept for Phase 6.
+- **Next:** Phase 3 (LLM baseline) and the market-implied baseline, which
+  are the intended ways to beat the base rate.
 
 ---
 
@@ -37,7 +42,7 @@ actually in the database. For the full plan and per-phase detail, see the
 | 1.5 | Kalshi + Polymarket markets | ✅ | ✅ | ✅ 172 + 62 markets |
 | 1.6 | Event calendar (FOMC + releases) | ✅ | ✅ | ✅ 4.9k events |
 | 1.7 | Data-quality dashboard (Streamlit) | ✅ | ✅ | n/a (read-only view) |
-| 2 | XGBoost Fed-cut baseline | ✅ | ✅ | needs FRED data to train |
+| 2 | XGBoost Fed-cut baseline | ✅ | ✅ | ✅ trained — see report* |
 | 3+ | LLM baseline, fine-tuning, ensemble, trading | ⬜ | ⬜ | — |
 
 Legend: ✅ done · ⬜ not started · ❌ not yet populated

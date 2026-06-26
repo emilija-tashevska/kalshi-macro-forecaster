@@ -17,11 +17,22 @@ Binary: **Will the Fed cut rates at the next FOMC meeting?**
 
 ## Test-set metrics (lower is better)
 
-| model      |   brier |   log_loss |       n |   pos_rate |   mean_pred |
-|:-----------|--------:|-----------:|--------:|-----------:|------------:|
-| xgboost    |  0.2167 |     0.8875 | 22.0000 |     0.2273 |      0.0245 |
-| always_0.5 |  0.2500 |     0.6931 | 22.0000 |     0.2273 |      0.5000 |
-| prior_rate |  0.2074 |     0.7242 | 22.0000 |     0.2273 |      0.0490 |
+| model              |   brier |   log_loss |       n |   pos_rate |   mean_pred |
+|:-------------------|--------:|-----------:|--------:|-----------:|------------:|
+| xgboost            |  0.2167 |     0.8875 | 22.0000 |     0.2273 |      0.0245 |
+| xgboost_calibrated |  0.2260 |     1.3396 | 22.0000 |     0.2273 |      0.0029 |
+| always_0.5         |  0.2500 |     0.6931 | 22.0000 |     0.2273 |      0.5000 |
+| prior_rate         |  0.2074 |     0.7242 | 22.0000 |     0.2273 |      0.0490 |
+
+## Findings
+
+The structured model **does not beat the base-rate baseline** on this target, and the obvious fixes make it worse:
+
+- Raw XGBoost beats `always_0.5` on Brier but loses to `prior_rate` and loses to both on log loss.
+- `scale_pos_weight` (class reweighting) was tried and was catastrophic — it optimizes balanced error and destroys probability calibration, which is what these proper scoring rules reward.
+- Post-hoc Platt calibration on the pooled out-of-fold predictions did **not** help either (it slightly worsened log loss).
+
+Root cause is **non-stationarity**: rate cuts are rare (~7% of meetings) and time-clustered, and the most recent held-out window has a far higher cut rate than the training history. Calibrating or reweighting to *past* frequencies cannot anticipate a *higher future* base rate. With only ~146 meetings this is intrinsically hard; richer context (the LLM in Phase 3) and a market baseline (Phase 7) are the intended ways to improve on it.
 
 ## Temporal CV (train+val, out-of-fold)
 
