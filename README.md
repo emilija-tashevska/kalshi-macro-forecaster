@@ -221,17 +221,18 @@ Built *from data we already hold* — no new API key needed:
 
 ---
 
-### Phase 3 — LLM Baseline (no fine-tuning)
+### Phase 3 — LLM Baseline (no fine-tuning) ✓ CODE COMPLETE (awaiting API key)
 
 **Goal:** Establish the un-fine-tuned LLM baseline that fine-tuning will have to beat.
 
-**Work items:**
+**Built:**
 
-- Prompt templates that render a dataset row as text.
-- API client wrappers for OpenAI (GPT-4o) and Anthropic (Claude).
-- Run on the same test set as Phase 2.
-- Parse probabilities out of LLM responses with constrained generation where possible.
-- Compute the same metrics.
+- ✓ `LLMClient` protocol with OpenAI + Anthropic wrappers (`llm/client.py`), SDKs lazily imported, temperature 0.
+- ✓ On-disk response cache (`CachedLLM` → `data/cache/llm`) so prompts are never paid for twice.
+- ✓ Prompt rendering of a point-in-time feature row + robust probability parsing (`llm/prompt.py`).
+- ✓ Orchestrator (`training/phase3_llm.py`) running the LLM on the **same** Fed-cut test split as Phase 2, compared to XGBoost + trivial baselines, with a reliability plot.
+- ✓ CLI: `kalshi-train baseline llm [--provider openai|anthropic] [--model ...]`.
+- ✓ 12 unit tests (prompt, parsing, cache, end-to-end with a fake LLM). **To run live:** add `OPENAI_API_KEY` or `ANTHROPIC_API_KEY` to `.env`.
 
 **Learning checkpoint:** Prompt engineering for forecasting. Why vanilla LLMs are systematically miscalibrated. The "consult the experts" prompt pattern. Token-level vs text-level probability extraction.
 

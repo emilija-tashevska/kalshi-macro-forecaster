@@ -51,6 +51,8 @@ class Settings(BaseSettings):
     # ── LLM baselines (Phase 3) ─────────────────────────────────────
     openai_api_key: SecretStr | None = None
     anthropic_api_key: SecretStr | None = None
+    openai_model: str = "gpt-4o"
+    anthropic_model: str = "claude-3-5-sonnet-latest"
 
     # ── Experiment tracking (Phase 5+) ──────────────────────────────
     wandb_api_key: SecretStr | None = None

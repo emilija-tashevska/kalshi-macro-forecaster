@@ -13,6 +13,7 @@ Available subcommands:
     kalshi-train ingest polymarket [OPTIONS]           (Phase 1.5 Polymarket markets)
     kalshi-train ingest calendar [OPTIONS]              (Phase 1.6 event calendar)
     kalshi-train train fed-cut [OPTIONS]                (Phase 2 XGBoost baseline)
+    kalshi-train baseline llm [OPTIONS]                 (Phase 3 vanilla LLM baseline)
 
 More subcommands arrive as we hit each phase.
 """
@@ -43,13 +44,17 @@ from kalshi_train.db.point_in_time import (
     pit_history,
     pit_value,
 )
+from kalshi_train.llm.client import LLMError, make_client
 from kalshi_train.training.phase2_fed_cut import run_phase2_fed_cut
+from kalshi_train.training.phase3_llm import run_phase3_llm
 
 app = typer.Typer(add_completion=False, help="Kalshi Model Train CLI.")
 ingest_app = typer.Typer(add_completion=False, help="Data ingestion commands.")
 train_app = typer.Typer(add_completion=False, help="Model training commands.")
+baseline_app = typer.Typer(add_completion=False, help="Baseline evaluation commands.")
 app.add_typer(ingest_app, name="ingest")
 app.add_typer(train_app, name="train")
+app.add_typer(baseline_app, name="baseline")
 console = Console()
 
 
@@ -513,6 +518,51 @@ def train_fed_cut_cmd(
         console.print(f"[green]Report:[/green] {result.report_path}")
     if result.reliability_plot:
         console.print(f"[green]Plot:[/green] {result.reliability_plot}")
+
+
+@baseline_app.command("llm")
+def baseline_llm_cmd(
+    provider: str = typer.Option("openai", "--provider", help="openai | anthropic."),
+    model: str | None = typer.Option(None, "--model", help="Override the model name."),
+    start: str = typer.Option("2000-01-01", "--start", help="First meeting (ISO date)."),
+    end: str | None = typer.Option(None, "--end", help="Last meeting (default: today)."),
+    no_report: bool = typer.Option(False, "--no-report", help="Skip writing the report."),
+) -> None:
+    """Phase 3 — run a vanilla LLM on the Fed-cut test set (needs an API key).
+
+    Compares the un-fine-tuned LLM to the XGBoost and trivial baselines on
+    the same held-out meetings. Responses are cached under data/cache/llm.
+    Example::
+
+        kalshi-train baseline llm --provider openai --model gpt-4o
+    """
+    try:
+        client = make_client(provider, model=model)
+    except LLMError as exc:
+        console.print(f"[red]{exc}[/red]")
+        raise typer.Exit(code=2) from exc
+
+    try:
+        result = run_phase3_llm(
+            client=client, start=start, end=end, write_report=not no_report
+        )
+    except RuntimeError as exc:
+        console.print(f"[red]{exc}[/red]")
+        raise typer.Exit(code=2) from exc
+
+    table = Table(title=f"Phase 3 — LLM baseline ({result.model})")
+    table.add_column("Model", style="cyan")
+    table.add_column("Brier", justify="right")
+    table.add_column("Log loss", justify="right")
+    for name, metrics in result.test_metrics.items():
+        table.add_row(name, f"{metrics.brier:.4f}", f"{metrics.log_loss:.4f}")
+    console.print(table)
+    console.print(
+        f"[bold]{result.n_test}[/bold] test meetings, "
+        f"{result.n_parse_failures} parse failures."
+    )
+    if not no_report:
+        console.print(f"[green]Report:[/green] {result.report_path}")
 
 
 if __name__ == "__main__":

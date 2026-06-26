@@ -25,8 +25,10 @@ actually in the database. For the full plan and per-phase detail, see the
   Cause is non-stationarity (recent window has a far higher cut rate than
   history); `scale_pos_weight` and post-hoc calibration were both tried and
   did not help. Calibration infra is kept for Phase 6.
-- **Next:** Phase 3 (LLM baseline) and the market-implied baseline, which
-  are the intended ways to beat the base rate.
+- **Phase 3 (vanilla LLM baseline) is code-complete + tested** (OpenAI /
+  Anthropic, cached, same test split as Phase 2). Add an LLM API key to run
+  it live: `kalshi-train baseline llm`.
+- **Next:** run Phase 3 live (needs key), then Phase 4 (SFT dataset).
 
 ---
 
@@ -43,7 +45,8 @@ actually in the database. For the full plan and per-phase detail, see the
 | 1.6 | Event calendar (FOMC + releases) | ✅ | ✅ | ✅ 4.9k events |
 | 1.7 | Data-quality dashboard (Streamlit) | ✅ | ✅ | n/a (read-only view) |
 | 2 | XGBoost Fed-cut baseline | ✅ | ✅ | ✅ trained — see report* |
-| 3+ | LLM baseline, fine-tuning, ensemble, trading | ⬜ | ⬜ | — |
+| 3 | Vanilla LLM baseline | ✅ | ✅ | ❌ needs OPENAI/ANTHROPIC key |
+| 4+ | Fine-tuning dataset, LoRA SFT, ensemble, trading | ⬜ | ⬜ | — |
 
 Legend: ✅ done · ⬜ not started · ❌ not yet populated
 
@@ -135,9 +138,9 @@ machine manually; never commit them.
 
 ## Quality
 
-- **Tests:** 101 unit tests passing; 4 integration tests auto-skip without
+- **Tests:** 114 unit tests passing; 4 integration tests auto-skip without
   network/keys. Run: `uv run pytest -m "not integration"`.
-- **Lint/types:** `ruff` and `mypy --strict` both clean across 44 source
+- **Lint/types:** `ruff` and `mypy --strict` both clean across 48 source
   files.
 - **Toolchain note:** the local venv uses Python 3.14 via `uv`. `xgboost`
   requires the `libomp` system library (`brew install libomp`) for the
