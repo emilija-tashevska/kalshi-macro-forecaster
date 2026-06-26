@@ -25,10 +25,15 @@ actually in the database. For the full plan and per-phase detail, see the
   Cause is non-stationarity (recent window has a far higher cut rate than
   history); `scale_pos_weight` and post-hoc calibration were both tried and
   did not help. Calibration infra is kept for Phase 6.
-- **Phase 3 (vanilla LLM baseline) is code-complete + tested** (OpenAI /
-  Anthropic, cached, same test split as Phase 2). Add an LLM API key to run
-  it live: `kalshi-train baseline llm`.
-- **Next:** run Phase 3 live (needs key), then Phase 4 (SFT dataset).
+- **Phase 3 (vanilla LLM baseline) ran live** (Claude Sonnet 4.6,
+  `reports/phase3_llm_baseline.md`): the un-fine-tuned LLM **beat XGBoost
+  and the base rate** on both Brier (0.141) and log loss (0.497) on the same
+  22 test meetings. ⚠️ Big caveat: the 2024 test meetings are likely within
+  the model's pretraining data, so this is an optimistic **upper bound**
+  (potential recall, not pure forecasting) — clean test is forward-testing
+  (Phase 8) or date-blinding.
+- **Next:** Phase 4 (SFT dataset), which also closes the documented market
+  /calendar gaps.
 
 ---
 
@@ -45,7 +50,7 @@ actually in the database. For the full plan and per-phase detail, see the
 | 1.6 | Event calendar (FOMC + releases) | ✅ | ✅ | ✅ 4.9k events |
 | 1.7 | Data-quality dashboard (Streamlit) | ✅ | ✅ | n/a (read-only view) |
 | 2 | XGBoost Fed-cut baseline | ✅ | ✅ | ✅ trained — see report* |
-| 3 | Vanilla LLM baseline | ✅ | ✅ | ❌ needs OPENAI/ANTHROPIC key |
+| 3 | Vanilla LLM baseline | ✅ | ✅ | ✅ ran (Claude Sonnet 4.6)* |
 | 4+ | Fine-tuning dataset, LoRA SFT, ensemble, trading | ⬜ | ⬜ | — |
 
 Legend: ✅ done · ⬜ not started · ❌ not yet populated

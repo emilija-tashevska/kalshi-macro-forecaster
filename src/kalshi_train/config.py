@@ -52,7 +52,7 @@ class Settings(BaseSettings):
     openai_api_key: SecretStr | None = None
     anthropic_api_key: SecretStr | None = None
     openai_model: str = "gpt-4o"
-    anthropic_model: str = "claude-3-5-sonnet-latest"
+    anthropic_model: str = "claude-sonnet-4-6"
 
     # ── Experiment tracking (Phase 5+) ──────────────────────────────
     wandb_api_key: SecretStr | None = None

@@ -168,6 +168,24 @@ def _write_report(
         "",
         comparison.to_markdown(floatfmt=".4f"),
         "",
+        "## Findings",
+        "",
+        "The vanilla LLM **beats XGBoost and the base-rate baseline** on both "
+        "Brier and log loss — the opposite of Phase 2. Given the *same* numeric "
+        "point-in-time features, the LLM spreads its probabilities across the "
+        "range and tracks the recent cutting cycle, whereas XGBoost (trained "
+        "only on history) stayed anchored near the low historical base rate.",
+        "",
+        "**Important caveat — LLM pretraining leakage.** The held-out meetings "
+        "are recent (2024), which almost certainly falls *within the model's "
+        "pretraining data*. The prompt includes the meeting date, so the model "
+        "may partly **recall the actual decisions** rather than forecast them. "
+        "This is a form of leakage we cannot fully control for a vanilla LLM, "
+        "so treat this score as an optimistic **upper bound**. The clean test "
+        "is forward-testing on meetings after the model's training cutoff "
+        "(Phase 8), or date-blinding the prompt. With only 22 test meetings, "
+        "variance is also high.",
+        "",
     ]
     if plot_path is not None:
         rel = Path(os.path.relpath(plot_path.resolve(), report_path.resolve().parent))
