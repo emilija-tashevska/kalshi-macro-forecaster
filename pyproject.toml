@@ -43,6 +43,7 @@ ml = [
     "matplotlib>=3.9",
     "seaborn>=0.13",
     "shap>=0.46",
+    "tabulate>=0.9",
 ]
 llm = [
     "openai>=1.40",

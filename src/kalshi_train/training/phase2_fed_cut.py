@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import os
 from dataclasses import dataclass
 from datetime import date
 from pathlib import Path
@@ -171,7 +172,9 @@ def _write_markdown_report(
         "",
     ]
     if plot_path is not None:
-        rel = plot_path.relative_to(report_path.parent)
+        # Robust to relative vs absolute path mixes (CLI passes a relative
+        # report path while the plot dir is absolute).
+        rel = Path(os.path.relpath(plot_path.resolve(), report_path.resolve().parent))
         lines.extend(
             [
                 "## Reliability diagram",
