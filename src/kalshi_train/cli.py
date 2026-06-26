@@ -14,6 +14,7 @@ Available subcommands:
     kalshi-train ingest calendar [OPTIONS]              (Phase 1.6 event calendar)
     kalshi-train train fed-cut [OPTIONS]                (Phase 2 XGBoost baseline)
     kalshi-train baseline llm [OPTIONS]                 (Phase 3 vanilla LLM baseline)
+    kalshi-train dataset build [OPTIONS]                (Phase 4 SFT dataset)
 
 More subcommands arrive as we hit each phase.
 """
@@ -45,6 +46,7 @@ from kalshi_train.db.point_in_time import (
     pit_value,
 )
 from kalshi_train.llm.client import LLMError, make_client
+from kalshi_train.sft.dataset import build_sft_dataset
 from kalshi_train.training.phase2_fed_cut import run_phase2_fed_cut
 from kalshi_train.training.phase3_llm import run_phase3_llm
 
@@ -52,9 +54,11 @@ app = typer.Typer(add_completion=False, help="Kalshi Model Train CLI.")
 ingest_app = typer.Typer(add_completion=False, help="Data ingestion commands.")
 train_app = typer.Typer(add_completion=False, help="Model training commands.")
 baseline_app = typer.Typer(add_completion=False, help="Baseline evaluation commands.")
+dataset_app = typer.Typer(add_completion=False, help="Dataset construction commands.")
 app.add_typer(ingest_app, name="ingest")
 app.add_typer(train_app, name="train")
 app.add_typer(baseline_app, name="baseline")
+app.add_typer(dataset_app, name="dataset")
 console = Console()
 
 
@@ -563,6 +567,43 @@ def baseline_llm_cmd(
     )
     if not no_report:
         console.print(f"[green]Report:[/green] {result.report_path}")
+
+
+@dataset_app.command("build")
+def dataset_build_cmd(
+    start: str = typer.Option("2000-01-01", "--start", help="First meeting (ISO date)."),
+    end: str | None = typer.Option(None, "--end", help="Last meeting (default: today)."),
+    no_report: bool = typer.Option(False, "--no-report", help="Skip the stats report."),
+) -> None:
+    """Phase 4 — build the SFT dataset (Fed-cut snapshots → chat JSONL).
+
+    Generates point-in-time lookback snapshots per meeting, soft calibrated
+    targets, a group-aware temporal split, and writes
+    ``data/sft/{train,val,test}.jsonl``. Example::
+
+        kalshi-train dataset build
+    """
+    try:
+        report = build_sft_dataset(start=start, end=end, write_report=not no_report)
+    except RuntimeError as exc:
+        console.print(f"[red]{exc}[/red]")
+        raise typer.Exit(code=2) from exc
+
+    table = Table(title="Phase 4 — SFT dataset")
+    table.add_column("split", style="cyan")
+    table.add_column("examples", justify="right", style="green")
+    for split, n in report.split_counts.items():
+        table.add_row(split, f"{n:,}")
+    console.print(table)
+    console.print(
+        f"[bold]{report.n_examples:,}[/bold] examples from "
+        f"[bold]{report.n_meetings}[/bold] meetings, base rate "
+        f"{report.base_rate:.1%}. Sanity passed: "
+        f"[{'green' if report.sanity_passed else 'red'}]{report.sanity_passed}[/]"
+    )
+    console.print(f"[green]Output:[/green] {report.output_dir}")
+    if not no_report:
+        console.print(f"[green]Report:[/green] {report.report_path}")
 
 
 if __name__ == "__main__":

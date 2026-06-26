@@ -32,8 +32,13 @@ actually in the database. For the full plan and per-phase detail, see the
   the model's pretraining data, so this is an optimistic **upper bound**
   (potential recall, not pure forecasting) — clean test is forward-testing
   (Phase 8) or date-blinding.
-- **Next:** Phase 4 (SFT dataset), which also closes the documented market
-  /calendar gaps.
+- **Phase 4 (SFT dataset) built** (`reports/phase4_sft_dataset.md`): 1,022
+  chat examples from 146 Fed-cut meetings x 7 lookback horizons, soft
+  calibrated targets, group-aware temporal split → `data/sft/*.jsonl`. All
+  sanity checks pass (group-disjoint, no leakage, completions parse).
+- **Next:** Phase 5 (LoRA fine-tuning on the SFT dataset). Phase 4 also
+  remains the home for the market/calendar gaps when other targets are
+  added.
 
 ---
 
@@ -51,7 +56,8 @@ actually in the database. For the full plan and per-phase detail, see the
 | 1.7 | Data-quality dashboard (Streamlit) | ✅ | ✅ | n/a (read-only view) |
 | 2 | XGBoost Fed-cut baseline | ✅ | ✅ | ✅ trained — see report* |
 | 3 | Vanilla LLM baseline | ✅ | ✅ | ✅ ran (Claude Sonnet 4.6)* |
-| 4+ | Fine-tuning dataset, LoRA SFT, ensemble, trading | ⬜ | ⬜ | — |
+| 4 | SFT dataset construction | ✅ | ✅ | ✅ 1,022 examples (Fed-cut) |
+| 4.5+ | Continued pretrain, LoRA SFT, ensemble, trading | ⬜ | ⬜ | — |
 
 Legend: ✅ done · ⬜ not started · ❌ not yet populated
 
@@ -143,9 +149,9 @@ machine manually; never commit them.
 
 ## Quality
 
-- **Tests:** 114 unit tests passing; 4 integration tests auto-skip without
+- **Tests:** 122 unit tests passing; 4 integration tests auto-skip without
   network/keys. Run: `uv run pytest -m "not integration"`.
-- **Lint/types:** `ruff` and `mypy --strict` both clean across 48 source
+- **Lint/types:** `ruff` and `mypy --strict` both clean across 51 source
   files.
 - **Toolchain note:** the local venv uses Python 3.14 via `uv`. `xgboost`
   requires the `libomp` system library (`brew install libomp`) for the

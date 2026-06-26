@@ -256,7 +256,18 @@ Built *from data we already hold* — no new API key needed:
 
 **Learning checkpoint:** Why dataset quality dominates model architecture. Why training on hard 0/1 labels for probabilistic tasks teaches over-confidence. The format of (prompt, completion) SFT data.
 
-**Exit criterion:** `data/sft/train.jsonl`, `data/sft/val.jsonl`, `data/sft/test.jsonl` exist with the expected counts and pass sanity checks (no leakage, balanced across targets, reasoning chains parse).
+**Status: ✓ COMPLETE for the Fed-cut target.**
+
+- ✓ Snapshot generator (`sft/snapshots.py`): each meeting × 7 lookback horizons (90/60/30/14/7/3/1 days), features computed PIT *as of each horizon date*.
+- ✓ Horizon-aware **calibrated** targets (`sft/dataset.py`): soft probability blending the train base rate (far out) toward the realized outcome (close in) — never hard 0/1.
+- ✓ Leakage-free templated reasoning chains ending in a parseable `PROBABILITY:` line (optional strong-LLM teacher is a future swap).
+- ✓ **Group-aware temporal split** (whole meetings to one split; earlier→train, later→test) + chat-format JSONL writer.
+- ✓ Built **1,022 examples** from 146 meetings → `data/sft/{train,val,test}.jsonl` (714/154/154); all sanity checks pass (group-disjoint, no leakage, completions parse). Report at `reports/phase4_sft_dataset.md`.
+- ✓ CLI: `kalshi-train dataset build`. 8 unit tests.
+
+> Path to the ~50k figure: only the **fed_decision** target is wired today; the other six templates plug into the same snapshot→example→split machinery.
+
+**Exit criterion:** `data/sft/train.jsonl`, `data/sft/val.jsonl`, `data/sft/test.jsonl` exist with the expected counts and pass sanity checks (no leakage, group-disjoint splits, reasoning chains parse). ✓
 
 ---
 
