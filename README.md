@@ -189,12 +189,12 @@ Built *from data we already hold* — no new API key needed:
 
 > **Note on sequencing:** Phase 2 (XGBoost) was built early as an end-to-end vertical slice, ahead of sub-phases 1.4–1.6. Those are now complete; the data layer is back in order.
 
-#### Phase 1.7 — Data quality dashboard
+#### Phase 1.7 — Data quality dashboard ✓ COMPLETE
 
-- A read-only Streamlit page (or Jupyter notebook) that shows:
-  - Coverage matrix: series × date range.
-  - Missing-data report.
-  - Sample point-in-time queries.
+- ✓ Read-only Streamlit dashboard (`src/kalshi_train/dashboard/`): table sizes, per-series numeric coverage + staleness, empty-series report, text-corpus coverage by year, Kalshi/Polymarket coverage, calendar consensus/surprise availability, ingest audit log, and an interactive point-in-time spot-check.
+- ✓ Reporting logic lives in pure, unit-tested query functions (`dashboard/queries.py`); the Streamlit script is a thin render layer.
+- ✓ Launch with `make dashboard` (installs the `dashboard` extra) → http://localhost:8501.
+- ✓ 6 unit tests on the query functions (incl. empty-DB safety).
 
 **Learning checkpoint for Phase 1:** Why 80% of ML is data engineering. Point-in-time discipline. The difference between observation date, release date, and vintage date. Why we never trust "current" data for historical predictions.
 

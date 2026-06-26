@@ -2,7 +2,7 @@
 # All commands run via `uv` so they use the project-managed Python.
 
 .PHONY: help install dev-install sync lock test test-fast lint format typecheck check \
-        db-init db-shell db-summary db-browser data-push data-pull clean clean-cache \
+        db-init db-shell db-summary db-browser dashboard data-push data-pull clean clean-cache \
         pre-commit-install pre-commit-run
 
 help:
@@ -27,6 +27,7 @@ help:
 	@echo "    db-shell           Open an interactive SQLite shell"
 	@echo "    db-summary         Print a one-shot DB summary report"
 	@echo "    db-browser         Launch Datasette read-only web UI on :8001"
+	@echo "    dashboard          Launch the Streamlit data-quality dashboard"
 	@echo ""
 	@echo "  Data sync (set DATA_REMOTE, e.g. r2:bucket/kalshi_train.db.gz):"
 	@echo "    data-push          Compress + upload the DB snapshot via rclone"
@@ -90,6 +91,10 @@ db-summary:
 db-browser:
 	@echo "Launching Datasette on http://localhost:8001 (read-only)."
 	uv run datasette serve $(DB_PATH) --port 8001 --immutable $(DB_PATH)
+
+dashboard:
+	@echo "Launching data-quality dashboard on http://localhost:8501"
+	uv run --extra dashboard streamlit run src/kalshi_train/dashboard/app.py
 
 # ── Data sync (cloud snapshot via rclone) ──────────────────────────────
 # The SQLite DB is gitignored. To move it between machines, snapshot it to

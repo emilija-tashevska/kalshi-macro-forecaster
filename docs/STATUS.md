@@ -11,15 +11,17 @@ actually in the database. For the full plan and per-phase detail, see the
 
 ## TL;DR
 
-- **Phases 0 → 1.6 are code-complete, tested, AND populated** in
-  `data/kalshi_train.db`: numeric (FRED + SPF), text corpus, markets
-  (Kalshi + Polymarket), and the event calendar. Phase 2 (XGBoost
-  baseline) was prototyped early and can now be trained on real data.
-- **95 unit tests pass; ruff + mypy clean.**
-- The DB now holds **~369k numeric vintage rows, 504 text documents, 172
+- **Phase 1 is COMPLETE** (sub-phases 1.1 → 1.7), code-complete, tested,
+  AND populated in `data/kalshi_train.db`: numeric (FRED + SPF), text
+  corpus, markets (Kalshi + Polymarket), event calendar, and a
+  data-quality dashboard. Phase 2 (XGBoost baseline) was prototyped early
+  and can now be trained on real data.
+- **101 unit tests pass; ruff + mypy clean.**
+- The DB now holds **~369k numeric vintage rows, 550 text documents, 172
   Kalshi markets + 20k price rows, 62 Polymarket markets, and 4.9k
   calendar events** (see table below).
-- **Next:** Phase 1.7 (data-quality dashboard), then train Phase 2.
+- **Next:** train Phase 2 for real (first baseline metrics), then Phase 3
+  (LLM baseline).
 
 ---
 
@@ -34,7 +36,7 @@ actually in the database. For the full plan and per-phase detail, see the
 | 1.4 | Text corpus (Fed statements/minutes/Beige Book) | ✅ | ✅ | ✅ 504 docs |
 | 1.5 | Kalshi + Polymarket markets | ✅ | ✅ | ✅ 172 + 62 markets |
 | 1.6 | Event calendar (FOMC + releases) | ✅ | ✅ | ✅ 4.9k events |
-| 1.7 | Data-quality dashboard | ⬜ | ⬜ | — |
+| 1.7 | Data-quality dashboard (Streamlit) | ✅ | ✅ | n/a (read-only view) |
 | 2 | XGBoost Fed-cut baseline | ✅ | ✅ | needs FRED data to train |
 | 3+ | LLM baseline, fine-tuning, ensemble, trading | ⬜ | ⬜ | — |
 
@@ -50,7 +52,7 @@ _(populated 2026-06-26)_
 |---|---:|---|
 | `series_definitions` | 99 | FRED (61 ok) + SPF (38) derived series. |
 | `series_observations` | 368,565 | FRED/ALFRED vintages + SPF. |
-| `text_documents` | 504 | FOMC statements (222, 2000–2025), minutes (207), Beige Book (75, 2017+). FTS5-searchable. |
+| `text_documents` | 550 | FOMC statements (222, 2000–2025), minutes (207), Beige Book (121, 2011+). FTS5-searchable. |
 | `kalshi_markets` | 172 | Macro markets across 5 templates. |
 | `kalshi_price_history` | 20,037 | Daily candlesticks. |
 | `polymarket_markets` | 62 | Macro markets (fed/gdp/cpi/yield). |
@@ -83,7 +85,9 @@ kalshi-train ingest polymarket --max 1000
 kalshi-train ingest calendar
 
 # Inspect
-kalshi-train db-info
+kalshi-train db-info     # quick row counts
+make dashboard           # Phase 1.7 data-quality dashboard (Streamlit, :8501)
+make db-browser          # Datasette web UI (:8001)
 ```
 
 A full populate order: `fred → spf → text → kalshi → polymarket → calendar`
@@ -126,9 +130,9 @@ machine manually; never commit them.
 
 ## Quality
 
-- **Tests:** 94 unit tests passing; 4 integration tests auto-skip without
+- **Tests:** 101 unit tests passing; 4 integration tests auto-skip without
   network/keys. Run: `uv run pytest -m "not integration"`.
-- **Lint/types:** `ruff` and `mypy --strict` both clean across 41 source
+- **Lint/types:** `ruff` and `mypy --strict` both clean across 44 source
   files.
 - **Toolchain note:** the local venv uses Python 3.14 via `uv`. `xgboost`
   requires the `libomp` system library (`brew install libomp`) for the
@@ -141,13 +145,13 @@ machine manually; never commit them.
 - **3 discontinued FRED series** — `PCETRIM12M656SFRBDAL`,
   `GOLDAMGBD228NLBM`, `EXHOSLUSM495S` 400 on FRED (renamed/removed). All
   optional; need updated IDs in `data/registry.py`.
-- **Beige Book pre-2017** — only 2017+ captured; older issues use legacy
-  exact-date URLs not yet generated (~130 more documents available).
+- **Beige Book pre-2011** — 2011+ captured; older issues are JS-rendered
+  single-page apps (a server GET returns only a table of contents), so
+  they'd need a headless browser (~80 more documents).
 - **Text corpus breadth** — SEP projections, Fed speeches, and
   ECB/BoE/BLS/BEA narratives are not implemented (the README's ~5,000-doc
   target assumed these). The source-dispatch design makes each one a
   single added URL builder + parser.
-- **Phase 1.7 dashboard** — not started.
 
 ---
 

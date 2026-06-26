@@ -48,6 +48,9 @@ llm = [
     "openai>=1.40",
     "anthropic>=0.34",
 ]
+dashboard = [
+    "streamlit>=1.38",
+]
 finetune = [
     "torch>=2.4",
     "transformers>=4.44",
@@ -139,6 +142,8 @@ module = [
     "wandb.*",
     "trl.*",
     "peft.*",
+    "streamlit",
+    "streamlit.*",
     "pandas",
     "pandas.*",
     "sklearn",
