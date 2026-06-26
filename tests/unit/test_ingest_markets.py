@@ -274,7 +274,10 @@ async def test_polymarket_pagination_stops_on_422() -> None:
 
 async def test_run_polymarket_ingest_stores_macro(tmp_db: Path) -> None:
     client = _FakePolyClient([_poly_models()])
-    report = await run_polymarket_ingest(db_path=tmp_db, client=client)
+    # tag_ids=[] → scan the flat feed once (no per-tag fan-out).
+    report = await run_polymarket_ingest(
+        db_path=tmp_db, client=client, tag_ids=[], closed=None
+    )
 
     assert report.markets_seen == 2
     assert report.markets_stored == 1
@@ -288,3 +291,16 @@ async def test_run_polymarket_ingest_stores_macro(tmp_db: Path) -> None:
     assert row["template_id"] == FED
     assert row["resolved"] == 1
     assert row["outcome"] == "no"  # priced ["0","1"] → "No" wins
+
+
+async def test_run_polymarket_dedups_across_tags(tmp_db: Path) -> None:
+    """A market carrying multiple macro tags is stored once, not duplicated."""
+    client = _FakePolyClient([_poly_models()])
+    report = await run_polymarket_ingest(
+        db_path=tmp_db, client=client, tag_ids=[100328, 370], closed=True
+    )
+    assert report.markets_seen == 4  # 2 models x 2 tags
+    assert report.markets_stored == 1  # deduped by condition_id
+    with connect(tmp_db, read_only=True) as conn:
+        n = conn.execute("SELECT COUNT(*) AS c FROM polymarket_markets").fetchone()["c"]
+    assert n == 1

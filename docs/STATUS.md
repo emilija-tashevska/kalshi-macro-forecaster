@@ -18,8 +18,8 @@ actually in the database. For the full plan and per-phase detail, see the
   and can now be trained on real data.
 - **101 unit tests pass; ruff + mypy clean.**
 - The DB now holds **~369k numeric vintage rows, 550 text documents, 172
-  Kalshi markets + 20k price rows, 62 Polymarket markets, and 4.9k
-  calendar events** (see table below).
+  Kalshi markets + 20k price rows, ~1.6k Polymarket markets (1.5k
+  resolved), and 4.9k calendar events** (see table below).
 - **Next:** train Phase 2 for real (first baseline metrics), then Phase 3
   (LLM baseline).
 
@@ -55,8 +55,8 @@ _(populated 2026-06-26)_
 | `text_documents` | 550 | FOMC statements (222, 2000–2025), minutes (207), Beige Book (121, 2011+). FTS5-searchable. |
 | `kalshi_markets` | 172 | Macro markets across 5 templates. |
 | `kalshi_price_history` | 20,037 | Daily candlesticks. |
-| `polymarket_markets` | 62 | Macro markets (fed/gdp/cpi/yield). |
-| `polymarket_price_history` | 0 | Subgraph tick history deferred. |
+| `polymarket_markets` | 1,610 | Macro markets across all 7 templates; 1,548 resolved (back to Oct 2023), 62 still open. Tag-based pull (Economy/GDP/CPI/jobs/recession). |
+| `polymarket_price_history` | 0 | Deferred — see Phase 4 gaps. |
 | `event_calendar` | 4,880 | Release events + 238 FOMC decisions; 105 GDP events carry SPF consensus + surprise. |
 | `question_templates` | 7 | Seeded at schema init. |
 | `resolutions` | 0 | Populated in a later phase. |
@@ -139,6 +139,36 @@ machine manually; never commit them.
   Phase 2 test to run.
 
 ---
+
+## To fix in Phase 4 (dataset construction)
+
+These don't block Phase 2/3 but must be resolved before the SFT dataset is
+built, because they bear on **leakage** and **market baselines**:
+
+- **Polymarket price-history gap.** `polymarket_price_history` is empty.
+  The Gamma `/markets` endpoint returns only metadata + final resolution,
+  not the price *time series*. Pulling the implied-probability path needs
+  Polymarket's CLOB/timeseries (or subgraph) API, keyed by each market's
+  `clobTokenIds`. Until then Polymarket gives us labels but no
+  point-in-time market-implied probability.
+- **Event-calendar consensus gap.** `event_calendar` only carries
+  `consensus`/`surprise` for **GDP** (the one series with a clean
+  same-frequency SPF nowcast). Monthly prints (CPI, NFP, unemployment,
+  etc.) have `consensus = NULL`, so no surprise. Filling these needs a
+  real release-consensus feed (DBnomics or Trading Economics) aligned to
+  each release's frequency.
+- **Market ↔ Fed-timeline alignment (leakage standardization).** Market
+  data is **not yet standardized to the prediction `as_of` timeline** and
+  is **not yet consumed by any model**. When we build training examples,
+  every market feature must be the price *as known on* the example's
+  `as_of_date` (`kalshi_price_history.period_end_date <= as_of`), and
+  resolutions used only as labels — mirroring the numeric PIT guard.
+  Coverage caveat: Kalshi candlesticks start ~2025 and Polymarket ~Oct
+  2023, so markets can only baseline *recent* events, not the full 2000+
+  FRED history.
+- **Non-US market noise.** A few Polymarket rows are non-US (e.g. "Canada
+  recession", "Eurozone inflation") tagged by keyword; tighten the
+  classifier to US-only when building the dataset.
 
 ## Known gaps / deferred work
 

@@ -376,17 +376,29 @@ def ingest_kalshi_cmd(
 
 @ingest_app.command("polymarket")
 def ingest_polymarket_cmd(
+    status: str = typer.Option(
+        "closed",
+        "--status",
+        help="Which markets: closed (resolved) | open | all. Default: closed.",
+    ),
     max_markets: int | None = typer.Option(None, "--max", help="Stop after N macro markets."),
     log_level: str = typer.Option("INFO", "--log-level", help="DEBUG/INFO/WARNING/ERROR."),
 ) -> None:
     """Ingest macro Polymarket markets into the DB (Gamma API, no key).
 
-    Example::
+    Filters by macro topic tags (Economy, GDP, CPI, jobs, recession). By
+    default pulls closed/resolved markets. Example::
 
-        kalshi-train ingest polymarket --max 500
+        kalshi-train ingest polymarket --status closed
     """
     _configure_logging(log_level)
-    report = asyncio.run(run_polymarket_ingest(max_markets=max_markets))
+    closed_map: dict[str, bool | None] = {"closed": True, "open": False, "all": None}
+    if status not in closed_map:
+        console.print(f"[red]--status must be one of {list(closed_map)}[/red]")
+        raise typer.Exit(code=2)
+    report = asyncio.run(
+        run_polymarket_ingest(closed=closed_map[status], max_markets=max_markets)
+    )
 
     table = Table(title="Polymarket ingest summary")
     table.add_column("template", style="cyan")
