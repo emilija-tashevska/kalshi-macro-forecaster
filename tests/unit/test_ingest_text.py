@@ -53,13 +53,19 @@ _MINUTES_HTML = """
 </div></body></html>
 """
 
-_BEIGE_HTML = """
+# Body must exceed BEIGE_MIN_BODY_CHARS (2000), mirroring real reports and
+# the TOC-stub filter; repeat a paragraph to get there.
+_BEIGE_PARA = (
+    "<p>Overall economic activity rose slightly in most Districts. Consumer "
+    "spending was mixed, with several Districts noting softening demand for "
+    "discretionary goods. Employment grew modestly and price pressures "
+    "continued to moderate across manufacturing and services alike.</p>"
+)
+_BEIGE_HTML = f"""
 <html><head><title>Beige Book</title></head>
 <body><div id="article">
   <h2 class="title">Summary of Commentary on Current Economic Conditions</h2>
-  <p>Overall economic activity rose slightly in most Districts. Consumer spending
-  was mixed, with several Districts noting softening demand for discretionary
-  goods. Employment grew modestly and price pressures continued to moderate.</p>
+  {_BEIGE_PARA * 10}
 </div></body></html>
 """
 

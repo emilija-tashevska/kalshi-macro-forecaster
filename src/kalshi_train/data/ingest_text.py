@@ -67,6 +67,7 @@ class TextCandidate:
     published_date: date
     effective_date: date | None = None
     title: str | None = None
+    min_body_chars: int = 200
 
 
 @dataclass(slots=True)
@@ -108,7 +109,26 @@ def fomc_minutes_url(meeting: date) -> str:
 
 
 def beige_book_url(year: int, month: int) -> str:
+    """Modern (2017+) Beige Book URL for a year/month."""
     return f"/monetarypolicy/beigebook{year:04d}{month:02d}.htm"
+
+
+def beige_book_urls(year: int, month: int) -> tuple[str, ...]:
+    """Beige Book URL variants: modern (2017+) then legacy (2011-2016).
+
+    Pre-2011 issues are JS-rendered single-page apps (a server GET returns
+    only a table of contents), so they're not recoverable this way and are
+    filtered out by the body-length minimum.
+    """
+    return (
+        f"/monetarypolicy/beigebook{year:04d}{month:02d}.htm",
+        f"/monetarypolicy/beigebook/beigebook{year:04d}{month:02d}.htm",
+    )
+
+
+# Beige Book TOC stubs (pre-2011, JS-rendered) are ~1.3k chars; real
+# reports are >=3.5k. This threshold keeps reports and drops the stubs.
+BEIGE_MIN_BODY_CHARS = 2000
 
 
 def _meeting_days(meeting: date) -> tuple[date, ...]:
@@ -190,9 +210,10 @@ def build_candidates(
                 candidates.append(
                     TextCandidate(
                         document_type=DOC_BEIGE_BOOK,
-                        urls=(beige_book_url(year, month),),
+                        urls=beige_book_urls(year, month),
                         published_date=pub,
                         title=f"Beige Book — {pub:%B %Y}",
+                        min_body_chars=BEIGE_MIN_BODY_CHARS,
                     )
                 )
 
@@ -228,6 +249,7 @@ async def _fetch_first(
             published_date=cand.published_date,
             effective_date=cand.effective_date,
             title=cand.title,
+            min_body_chars=cand.min_body_chars,
         )
         if doc is not None:
             return doc
