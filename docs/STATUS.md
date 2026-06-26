@@ -1,6 +1,6 @@
 # Project Status
 
-_Last updated: 2026-06-25_
+_Last updated: 2026-06-26_
 
 A living snapshot of what is built, what is tested, and what data is
 actually in the database. For the full plan and per-phase detail, see the
@@ -11,16 +11,15 @@ actually in the database. For the full plan and per-phase detail, see the
 
 ## TL;DR
 
-- **Phases 0 → 1.6 are code-complete and tested** (numeric, text, markets,
-  calendar). Phase 2 (XGBoost baseline) was prototyped early.
-- **94 unit tests pass; ruff + mypy clean.**
-- **Only the Fed text corpus is currently persisted** in
-  `data/kalshi_train.db` (504 documents). Everything else is code-complete
-  and live-verified but has **not been run into the main DB** yet (FRED
-  needs an API key; Kalshi/Polymarket/calendar were only smoke-tested
-  against throwaway DBs).
-- **None of the Phase 1.4–1.6 work is committed yet** (working tree has
-  uncommitted changes on top of the `Phase 2` commit).
+- **Phases 0 → 1.6 are code-complete, tested, AND populated** in
+  `data/kalshi_train.db`: numeric (FRED + SPF), text corpus, markets
+  (Kalshi + Polymarket), and the event calendar. Phase 2 (XGBoost
+  baseline) was prototyped early and can now be trained on real data.
+- **95 unit tests pass; ruff + mypy clean.**
+- The DB now holds **~369k numeric vintage rows, 504 text documents, 172
+  Kalshi markets + 20k price rows, 62 Polymarket markets, and 4.9k
+  calendar events** (see table below).
+- **Next:** Phase 1.7 (data-quality dashboard), then train Phase 2.
 
 ---
 
@@ -30,11 +29,11 @@ actually in the database. For the full plan and per-phase detail, see the
 |---|---|---|---|---|
 | 0 | Scaffolding, schema, DB tooling | ✅ | ✅ | n/a |
 | 1.1 | Point-in-time foundation + leakage guard | ✅ | ✅ | n/a |
-| 1.2 | FRED / ALFRED numeric ingestion | ✅ | ✅ | ❌ needs API key |
-| 1.3 | SPF (Survey of Professional Forecasters) | ✅ | ✅ | ❌ not run |
+| 1.2 | FRED / ALFRED numeric ingestion | ✅ | ✅ | ✅ 99 series, ~369k rows |
+| 1.3 | SPF (Survey of Professional Forecasters) | ✅ | ✅ | ✅ 38 series, 5.6k rows |
 | 1.4 | Text corpus (Fed statements/minutes/Beige Book) | ✅ | ✅ | ✅ 504 docs |
-| 1.5 | Kalshi + Polymarket markets | ✅ | ✅ | ❌ not run (temp-DB only) |
-| 1.6 | Event calendar (FOMC + releases) | ✅ | ✅ | ❌ not run |
+| 1.5 | Kalshi + Polymarket markets | ✅ | ✅ | ✅ 172 + 62 markets |
+| 1.6 | Event calendar (FOMC + releases) | ✅ | ✅ | ✅ 4.9k events |
 | 1.7 | Data-quality dashboard | ⬜ | ⬜ | — |
 | 2 | XGBoost Fed-cut baseline | ✅ | ✅ | needs FRED data to train |
 | 3+ | LLM baseline, fine-tuning, ensemble, trading | ⬜ | ⬜ | — |
@@ -45,19 +44,24 @@ Legend: ✅ done · ⬜ not started · ❌ not yet populated
 
 ## What is actually in `data/kalshi_train.db` right now
 
+_(populated 2026-06-26)_
+
 | Table | Rows | Notes |
 |---|---:|---|
-| `text_documents` | 504 | FOMC statements (222, 2000–2025), minutes (207, 2000–2025), Beige Book (75, 2017+). FTS5-searchable. |
+| `series_definitions` | 99 | FRED (61 ok) + SPF (38) derived series. |
+| `series_observations` | 368,565 | FRED/ALFRED vintages + SPF. |
+| `text_documents` | 504 | FOMC statements (222, 2000–2025), minutes (207), Beige Book (75, 2017+). FTS5-searchable. |
+| `kalshi_markets` | 172 | Macro markets across 5 templates. |
+| `kalshi_price_history` | 20,037 | Daily candlesticks. |
+| `polymarket_markets` | 62 | Macro markets (fed/gdp/cpi/yield). |
+| `polymarket_price_history` | 0 | Subgraph tick history deferred. |
+| `event_calendar` | 4,880 | Release events + 238 FOMC decisions; 105 GDP events carry SPF consensus + surprise. |
 | `question_templates` | 7 | Seeded at schema init. |
-| `series_definitions` | 0 | Awaiting FRED ingest. |
-| `series_observations` | 0 | Awaiting FRED ingest. |
-| `kalshi_markets` | 0 | Code-complete; not run into main DB. |
-| `kalshi_price_history` | 0 | Code-complete; not run into main DB. |
-| `polymarket_markets` | 0 | Code-complete; not run into main DB. |
-| `event_calendar` | 0 | Code-complete; not run into main DB. |
 | `resolutions` | 0 | Populated in a later phase. |
 
-> The DB file is gitignored (it does not travel with the repo).
+> The DB file is gitignored (it does not travel with the repo). 3 optional
+> FRED series were dropped (FRED renamed/discontinued them):
+> `PCETRIM12M656SFRBDAL`, `GOLDAMGBD228NLBM`, `EXHOSLUSM495S`.
 
 ---
 
@@ -134,10 +138,9 @@ machine manually; never commit them.
 
 ## Known gaps / deferred work
 
-- **FRED data not loaded** — needs a free `FRED_API_KEY` in `.env`.
-- **Markets/calendar not in the main DB** — code is done and live-verified
-  (172 Kalshi macro markets, 733 GDP price rows, 30 Polymarket markets in
-  smoke tests); just needs a real run into `data/kalshi_train.db`.
+- **3 discontinued FRED series** — `PCETRIM12M656SFRBDAL`,
+  `GOLDAMGBD228NLBM`, `EXHOSLUSM495S` 400 on FRED (renamed/removed). All
+  optional; need updated IDs in `data/registry.py`.
 - **Beige Book pre-2017** — only 2017+ captured; older issues use legacy
   exact-date URLs not yet generated (~130 more documents available).
 - **Text corpus breadth** — SEP projections, Fed speeches, and

@@ -132,13 +132,16 @@ def test_url_builders_format_dates() -> None:
     assert beige_book_url(2024, 3) == "/monetarypolicy/beigebook202403.htm"
 
 
-def test_build_candidates_uses_calendar(tmp_path: Path) -> None:
+def test_build_candidates_uses_calendar(tmp_db: Path, tmp_path: Path) -> None:
     cal = tmp_path / "fomc.txt"
     cal.write_text("2024-01-31\n2024-03-20\n")
+    # tmp_db has an empty event_calendar, so prefer_db falls back to the
+    # static file rather than reading the real project DB.
     cands = build_candidates(
         start="2024-01-01",
         end="2024-12-31",
         document_types=[DOC_FOMC_STATEMENT, DOC_FOMC_MINUTES],
+        db_path=tmp_db,
         calendar_path=cal,
     )
     statements = [c for c in cands if c.document_type == DOC_FOMC_STATEMENT]

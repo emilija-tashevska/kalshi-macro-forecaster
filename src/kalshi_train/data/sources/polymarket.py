@@ -147,9 +147,21 @@ class PolymarketClient:
         offset = 0
         base = dict(params or {})
         while True:
-            page = await self._get(
-                "/markets", {**base, "limit": page_size, "offset": offset}
-            )
+            try:
+                page = await self._get(
+                    "/markets", {**base, "limit": page_size, "offset": offset}
+                )
+            except httpx.HTTPStatusError as e:
+                # Gamma caps how deep you can page and returns 4xx past the
+                # limit; treat that as the end of the result set.
+                if e.response.status_code in (400, 422):
+                    logger.info(
+                        "Polymarket pagination ended at offset %d (HTTP %d)",
+                        offset,
+                        e.response.status_code,
+                    )
+                    break
+                raise
             items = page if isinstance(page, list) else page.get("data", [])
             if not items:
                 break

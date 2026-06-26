@@ -11,6 +11,8 @@ from collections.abc import AsyncIterator
 from pathlib import Path
 from typing import Any
 
+import httpx
+
 from kalshi_train.data.ingest_kalshi import market_to_row, run_kalshi_ingest
 from kalshi_train.data.ingest_polymarket import run_polymarket_ingest
 from kalshi_train.data.kalshi_macro import (
@@ -21,7 +23,7 @@ from kalshi_train.data.kalshi_macro import (
     parse_strike,
 )
 from kalshi_train.data.sources.kalshi_models import Candlestick, KalshiMarketModel
-from kalshi_train.data.sources.polymarket import PolymarketMarketModel
+from kalshi_train.data.sources.polymarket import PolymarketClient, PolymarketMarketModel
 from kalshi_train.db.connection import connect
 
 # ── classifier ─────────────────────────────────────────────────────────
@@ -246,6 +248,28 @@ def _poly_models() -> list[PolymarketMarketModel]:
             }
         ),
     ]
+
+
+async def test_polymarket_pagination_stops_on_422() -> None:
+    """Gamma returns 4xx past its max offset; pagination must stop, not crash."""
+    pages = {
+        0: [{"conditionId": f"a{i}", "question": "q"} for i in range(100)],
+        100: [{"conditionId": f"b{i}", "question": "q"} for i in range(100)],
+    }
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        offset = int(request.url.params.get("offset", "0"))
+        if offset in pages:
+            return httpx.Response(200, json=pages[offset])
+        return httpx.Response(422, json={"error": "offset too large"})
+
+    client = PolymarketClient(rate_limit_delay=0.0)
+    client._client = httpx.AsyncClient(
+        base_url="https://x", transport=httpx.MockTransport(handler)
+    )
+    sizes = [len(batch) async for batch in client.paginate_markets(page_size=100)]
+    await client._client.aclose()
+    assert sizes == [100, 100]  # two pages, then 422 → graceful stop
 
 
 async def test_run_polymarket_ingest_stores_macro(tmp_db: Path) -> None:
