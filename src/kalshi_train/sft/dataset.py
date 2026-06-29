@@ -14,6 +14,7 @@ snapshot of a test meeting can leak into training.
 from __future__ import annotations
 
 import json
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from datetime import date
 from pathlib import Path
@@ -24,6 +25,8 @@ import pandas as pd
 from kalshi_train.config import PROJECT_ROOT
 from kalshi_train.llm.prompt import parse_probability, render_fed_cut_prompt
 from kalshi_train.sft.snapshots import DEFAULT_HORIZONS, build_fed_cut_snapshots
+
+Retriever = Callable[[date], list[str]]
 
 DEFAULT_OUTPUT_DIR = PROJECT_ROOT / "data" / "sft"
 DEFAULT_REPORT_PATH = PROJECT_ROOT / "reports" / "phase4_sft_dataset.md"
@@ -111,12 +114,29 @@ def build_reasoning(row: dict[str, Any], target_prob: float, base_rate: float) -
     )
 
 
+def _augment_user_with_passages(user: str, passages: list[str]) -> str:
+    """Append a clearly-labeled, point-in-time Fed-text section to the prompt."""
+    if not passages:
+        return user
+    block = "\n\n---\n\n".join(passages)
+    return (
+        f"{user}\n\nRelevant Fed communications (published on or before this "
+        f"date):\n\n{block}"
+    )
+
+
 def snapshot_to_example(
-    row: dict[str, Any], *, base_rate: float, split: str
+    row: dict[str, Any], *, base_rate: float, split: str, passages: list[str] | None = None
 ) -> dict[str, Any]:
-    """Turn one snapshot row into a chat example with metadata."""
+    """Turn one snapshot row into a chat example with metadata.
+
+    If ``passages`` (PIT-safe retrieved Fed text) are supplied, they're
+    folded into the user prompt so the model can read the Fed's words.
+    """
     target = calibrated_probability(int(row["label"]), int(row["horizon_days"]), base_rate)
     system, user = render_fed_cut_prompt(row)
+    if passages:
+        user = _augment_user_with_passages(user, passages)
     assistant = build_reasoning(row, target, base_rate)
     meeting = row["meeting_date"]
     as_of = row["as_of_date"]
@@ -134,6 +154,7 @@ def snapshot_to_example(
             "horizon_days": int(row["horizon_days"]),
             "label": int(row["label"]),
             "target_prob": target,
+            "n_passages": len(passages) if passages else 0,
             "split": split,
         },
     }
@@ -174,8 +195,14 @@ def build_sft_dataset(
     output_dir: Path = DEFAULT_OUTPUT_DIR,
     report_path: Path = DEFAULT_REPORT_PATH,
     write_report: bool = True,
+    retriever: Retriever | None = None,
 ) -> SFTReport:
-    """Build the SFT dataset end-to-end and write the JSONL splits."""
+    """Build the SFT dataset end-to-end and write the JSONL splits.
+
+    When ``retriever`` is supplied, each snapshot's prompt is augmented with
+    point-in-time Fed-text passages (RAG); the retriever must itself only
+    return text published on/before the as-of date.
+    """
     snaps = build_fed_cut_snapshots(start=start, end=end, horizons=horizons, db_path=db_path)
     if snaps.empty:
         raise RuntimeError("No snapshots produced — ingest FRED data first.")
@@ -196,8 +223,11 @@ def build_sft_dataset(
     examples_by_split: dict[str, list[dict[str, Any]]] = {"train": [], "val": [], "test": []}
     for row in snaps.to_dict(orient="records"):
         split = split_map[pd.Timestamp(row["meeting_date"]).date()]
+        passages = (
+            retriever(pd.Timestamp(row["as_of_date"]).date()) if retriever else None
+        )
         examples_by_split[split].append(
-            snapshot_to_example(row, base_rate=base_rate, split=split)
+            snapshot_to_example(row, base_rate=base_rate, split=split, passages=passages)
         )
 
     output_dir.mkdir(parents=True, exist_ok=True)

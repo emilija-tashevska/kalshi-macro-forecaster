@@ -146,6 +146,34 @@ END;
 
 
 -- ────────────────────────────────────────────────────────────────────
+-- TABLE: text_chunks
+-- Phase: 4 (RAG)
+-- Purpose: passage-level chunks of text_documents with embeddings, for
+-- point-in-time retrieval. published_date is denormalized so retrieval
+-- can cheaply filter to "knowable as of date X". Embeddings are stored as
+-- raw little-endian float32 bytes.
+-- ────────────────────────────────────────────────────────────────────
+CREATE TABLE IF NOT EXISTS text_chunks (
+    chunk_id        TEXT PRIMARY KEY,             -- f"{doc_id}:{chunk_index}"
+    doc_id          TEXT NOT NULL,
+    source          TEXT NOT NULL,
+    document_type   TEXT NOT NULL,
+    published_date  TEXT NOT NULL,                -- denormalized from text_documents
+    chunk_index     INTEGER NOT NULL,
+    text            TEXT NOT NULL,
+    embedding       BLOB,                         -- float32 vector, or NULL if not embedded
+    embed_model     TEXT NOT NULL DEFAULT '',
+    dim             INTEGER NOT NULL DEFAULT 0,
+    ingested_at     TEXT NOT NULL,
+    FOREIGN KEY (doc_id) REFERENCES text_documents(doc_id) ON DELETE CASCADE
+);
+
+CREATE INDEX IF NOT EXISTS idx_chunks_pubdate ON text_chunks(published_date);
+CREATE INDEX IF NOT EXISTS idx_chunks_doc     ON text_chunks(doc_id);
+CREATE INDEX IF NOT EXISTS idx_chunks_type    ON text_chunks(document_type);
+
+
+-- ────────────────────────────────────────────────────────────────────
 -- TABLE: question_templates
 -- Phase: 1.5
 -- Purpose: the 7 prediction targets the project is built around.

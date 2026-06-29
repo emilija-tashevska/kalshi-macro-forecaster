@@ -46,7 +46,9 @@ from kalshi_train.db.point_in_time import (
     pit_value,
 )
 from kalshi_train.llm.client import LLMError, make_client
-from kalshi_train.sft.dataset import build_sft_dataset
+from kalshi_train.rag.embedder import EmbedderError, OpenAIEmbedder
+from kalshi_train.rag.store import ChunkIndex, build_chunk_index, make_retriever
+from kalshi_train.sft.dataset import Retriever, build_sft_dataset
 from kalshi_train.training.phase2_fed_cut import run_phase2_fed_cut
 from kalshi_train.training.phase3_llm import run_phase3_llm
 
@@ -55,10 +57,12 @@ ingest_app = typer.Typer(add_completion=False, help="Data ingestion commands.")
 train_app = typer.Typer(add_completion=False, help="Model training commands.")
 baseline_app = typer.Typer(add_completion=False, help="Baseline evaluation commands.")
 dataset_app = typer.Typer(add_completion=False, help="Dataset construction commands.")
+rag_app = typer.Typer(add_completion=False, help="Retrieval (RAG) commands.")
 app.add_typer(ingest_app, name="ingest")
 app.add_typer(train_app, name="train")
 app.add_typer(baseline_app, name="baseline")
 app.add_typer(dataset_app, name="dataset")
+app.add_typer(rag_app, name="rag")
 console = Console()
 
 
@@ -569,22 +573,67 @@ def baseline_llm_cmd(
         console.print(f"[green]Report:[/green] {result.report_path}")
 
 
+@rag_app.command("build-index")
+def rag_build_index_cmd(
+    rebuild: bool = typer.Option(False, "--rebuild", help="Re-chunk + re-embed everything."),
+    types: list[str] = typer.Option(  # noqa: B008
+        [], "--type", "-t", help="Restrict to document types. Repeatable."
+    ),
+    log_level: str = typer.Option("INFO", "--log-level", help="DEBUG/INFO/WARNING/ERROR."),
+) -> None:
+    """Chunk + embed the text corpus into ``text_chunks`` (needs an OpenAI key).
+
+    Example::
+
+        kalshi-train rag build-index
+    """
+    _configure_logging(log_level)
+    try:
+        embedder = OpenAIEmbedder()
+    except EmbedderError as exc:
+        console.print(f"[red]{exc}[/red]")
+        raise typer.Exit(code=2) from exc
+    n = build_chunk_index(embedder, document_types=types or None, rebuild=rebuild)
+    console.print(f"[green]Embedded {n:,} chunks[/green] with {embedder.model}.")
+
+
+def _build_text_retriever(top_k: int) -> Retriever:
+    embedder = OpenAIEmbedder()
+    index = ChunkIndex()
+    if len(index) == 0:
+        raise RuntimeError("No embedded chunks. Run `kalshi-train rag build-index` first.")
+    return make_retriever(embedder, index, k=top_k)
+
+
 @dataset_app.command("build")
 def dataset_build_cmd(
     start: str = typer.Option("2000-01-01", "--start", help="First meeting (ISO date)."),
     end: str | None = typer.Option(None, "--end", help="Last meeting (default: today)."),
+    with_text: bool = typer.Option(
+        False, "--with-text", help="Augment prompts with retrieved PIT Fed text (RAG)."
+    ),
+    top_k: int = typer.Option(4, "--top-k", help="Passages to retrieve per snapshot."),
     no_report: bool = typer.Option(False, "--no-report", help="Skip the stats report."),
 ) -> None:
     """Phase 4 — build the SFT dataset (Fed-cut snapshots → chat JSONL).
 
     Generates point-in-time lookback snapshots per meeting, soft calibrated
     targets, a group-aware temporal split, and writes
-    ``data/sft/{train,val,test}.jsonl``. Example::
+    ``data/sft/{train,val,test}.jsonl``. With ``--with-text`` each prompt is
+    augmented with retrieved Fed passages (requires `rag build-index` + an
+    OpenAI key). Example::
 
-        kalshi-train dataset build
+        kalshi-train dataset build --with-text
     """
     try:
-        report = build_sft_dataset(start=start, end=end, write_report=not no_report)
+        retriever = _build_text_retriever(top_k) if with_text else None
+    except (EmbedderError, RuntimeError) as exc:
+        console.print(f"[red]{exc}[/red]")
+        raise typer.Exit(code=2) from exc
+    try:
+        report = build_sft_dataset(
+            start=start, end=end, write_report=not no_report, retriever=retriever
+        )
     except RuntimeError as exc:
         console.print(f"[red]{exc}[/red]")
         raise typer.Exit(code=2) from exc
