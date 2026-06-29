@@ -27,6 +27,7 @@ from kalshi_train.data.ingest_text import (
 )
 from kalshi_train.data.sources.fed_text import build_document, extract_title, html_to_text
 from kalshi_train.db.connection import connect
+from kalshi_train.db.ingest import TextDocument, bulk_insert_documents
 
 _STATEMENT_HTML = """
 <html><head><title>Federal Reserve issues FOMC statement</title></head>
@@ -274,6 +275,35 @@ async def test_run_text_ingest_crawls_speeches(tmp_db: Path) -> None:
             "SELECT COUNT(*) AS c FROM text_documents WHERE document_type='fed_speech'"
         ).fetchone()["c"]
     assert n == 2
+
+
+def test_bulk_insert_documents_survives_natural_key_collision(tmp_db: Path) -> None:
+    """Two distinct URLs sharing (source, type, date, title) must not crash."""
+    body = "x" * 400
+    docs = [
+        TextDocument(
+            source="fed",
+            document_type="fed_speech",
+            title="Welcoming Remarks",
+            published_date="2024-05-01",
+            body=body,
+            url="https://x/a.htm",
+        ),
+        TextDocument(
+            source="fed",
+            document_type="fed_speech",
+            title="Welcoming Remarks",  # same title+date, different URL
+            published_date="2024-05-01",
+            body=body,
+            url="https://x/b.htm",
+        ),
+    ]
+    with connect(tmp_db) as conn:
+        written = bulk_insert_documents(conn, docs)
+        conn.commit()
+        n = conn.execute("SELECT COUNT(*) AS c FROM text_documents").fetchone()["c"]
+    assert written == 1  # second collided on the natural key and was skipped
+    assert n == 1
 
 
 async def test_fts_index_is_searchable(tmp_db: Path, tmp_path: Path) -> None:

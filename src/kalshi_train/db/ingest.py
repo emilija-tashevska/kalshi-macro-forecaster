@@ -456,14 +456,22 @@ def upsert_document(conn: sqlite3.Connection, doc: TextDocument) -> None:
 
 
 def bulk_insert_documents(conn: sqlite3.Connection, docs: Iterable[TextDocument]) -> int:
-    """Insert many documents. Returns count attempted.
+    """Insert many documents. Returns the count actually written.
 
     We loop rather than ``executemany`` so the per-row FTS sync triggers
-    fire cleanly and a single malformed row can't poison the batch.
+    fire cleanly and a single malformed row can't poison the batch. The
+    upsert keys on ``doc_id`` (a hash of the URL), but the schema also has a
+    ``UNIQUE(source, document_type, published_date, title)`` natural key;
+    two genuinely distinct documents can collide there (e.g. same-day
+    speeches sharing a generic title). We skip such duplicates rather than
+    abort the whole batch.
     """
     n = 0
     for doc in docs:
-        conn.execute(_DOCUMENT_UPSERT_SQL, _document_params(doc))
+        try:
+            conn.execute(_DOCUMENT_UPSERT_SQL, _document_params(doc))
+        except sqlite3.IntegrityError:
+            continue
         n += 1
     return n
 
