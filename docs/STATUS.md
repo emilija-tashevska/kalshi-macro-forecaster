@@ -71,7 +71,7 @@ _(populated 2026-06-26)_
 |---|---:|---|
 | `series_definitions` | 99 | FRED (61 ok) + SPF (38) derived series. |
 | `series_observations` | 368,565 | FRED/ALFRED vintages + SPF. |
-| `text_documents` | 550 | FOMC statements (222, 2000–2025), minutes (207), Beige Book (121, 2011+). FTS5-searchable. |
+| `text_documents` | 1,596 | Speeches (982, 2011+), statements (222, 2000+), minutes (207), Beige Books (121, 2011+), testimony (64, 2017+). FTS5-searchable. |
 | `kalshi_markets` | 172 | Macro markets across 5 templates. |
 | `kalshi_price_history` | 20,037 | Daily candlesticks. |
 | `polymarket_markets` | 1,610 | Macro markets across all 7 templates; 1,548 resolved (back to Oct 2023), 62 still open. Tag-based pull (Economy/GDP/CPI/jobs/recession). |
@@ -149,7 +149,7 @@ machine manually; never commit them.
 
 ## Quality
 
-- **Tests:** 122 unit tests passing; 4 integration tests auto-skip without
+- **Tests:** 126 unit tests passing; 4 integration tests auto-skip without
   network/keys. Run: `uv run pytest -m "not integration"`.
 - **Lint/types:** `ruff` and `mypy --strict` both clean across 51 source
   files.

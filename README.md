@@ -154,13 +154,14 @@ Federal Reserve communications, fetched via deterministic URLs (no key):
 - ✓ FOMC statement scraper — URLs derived from the FOMC calendar (reuses Phase 1.6).
 - ✓ FOMC minutes scraper — same calendar, with an approximate +21-day publication date.
 - ✓ Beige Book scraper — probes all release months.
+- ✓ **Fed speeches + testimony** — *index-crawl* path (the per-year index pages are crawled, links extracted, dates parsed from URLs) since their URLs embed speaker+date and can't be derived from the calendar. Covers 2011+ (speeches) / 2017+ (testimony).
 - ✓ Async `FedTextClient` (404 → `None` so candidate URLs can be safely probed) + pure, testable HTML parsers (`data/sources/fed_text.py`).
 - ✓ Clean body extraction (strips nav/script/footer) + dedup via `body_hash` + automatic FTS5 indexing.
 - ✓ CLI: `kalshi-train ingest text [--type fomc_statement|fomc_minutes|beige_book] [--start --end --limit]`.
 - ✓ Per-document **ordered URL fallbacks** to handle the Fed's era-specific schemes and 2-day meetings (statement/minutes filename uses the meeting's *last* day): modern `pressreleases` + legacy `boarddocs` paths, each tried for the listed date and date+1.
-- ✓ 9 unit tests (HTML fixtures, parser, probe-and-skip, idempotency, FTS search). **Verified live — full 2000→2025 backfill**: 504 documents stored (222 FOMC statements, 207 minutes, 75 Beige Books), all FTS-searchable.
+- ✓ 13 unit tests (HTML fixtures, parser, probe-and-skip, index-crawl, dedup, idempotency, FTS search). **Verified live**: **1,596 documents** — 982 speeches (2011+), 222 statements + 207 minutes (2000+), 121 Beige Books (2011+), 64 testimony (2017+) — all FTS-searchable.
 
-> Known gap: Beige Books before 2017 use legacy exact-date URLs we don't yet generate (only 2017+ captured). SEP projections, Fed speeches, and ECB/BoE/BLS/BEA narratives are deferred; the source-dispatch design makes each a single added URL builder + parser.
+> Known gaps: speeches/testimony and Beige Books before ~2011 use legacy archive layouts we don't yet crawl. SEP projections and ECB/BoE/BLS/BEA narratives are still deferred; each is a single added URL builder/index + parser.
 
 **Checkpoint:** `kalshi-train ingest text` stores clean statement/minutes/Beige Book text, searchable via `text_documents_fts`.
 
