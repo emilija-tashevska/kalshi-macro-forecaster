@@ -21,7 +21,8 @@ below makes adding them a matter of one more URL builder + parser.
 from __future__ import annotations
 
 import logging
-from collections.abc import Sequence
+import re
+from collections.abc import Callable, Sequence
 from dataclasses import dataclass, field
 from datetime import UTC, date, datetime, timedelta
 from pathlib import Path
@@ -44,12 +45,33 @@ SOURCE = "fed"
 DOC_FOMC_STATEMENT = "fomc_statement"
 DOC_FOMC_MINUTES = "fomc_minutes"
 DOC_BEIGE_BOOK = "beige_book"
-ALL_DOC_TYPES = (DOC_FOMC_STATEMENT, DOC_FOMC_MINUTES, DOC_BEIGE_BOOK)
+DOC_FED_SPEECH = "fed_speech"
+DOC_FED_TESTIMONY = "fed_testimony"
+
+# Calendar-derivable (URL-probe) document types.
+CALENDAR_DOC_TYPES = (DOC_FOMC_STATEMENT, DOC_FOMC_MINUTES, DOC_BEIGE_BOOK)
+# Index-crawled document types (URLs embed speaker+date, so we discover
+# them from per-year index pages rather than deriving them).
+INDEXED_DOC_TYPES = (DOC_FED_SPEECH, DOC_FED_TESTIMONY)
+ALL_DOC_TYPES = (*CALENDAR_DOC_TYPES, *INDEXED_DOC_TYPES)
 
 # Minutes publish roughly three weeks after the meeting. We don't parse
 # the exact release date out of the HTML (brittle); this approximation is
 # only used for ``published_date`` and is documented as such.
 _MINUTES_PUBLICATION_LAG = timedelta(days=21)
+
+# Per-year index pages + the link shape for each indexed source. The Fed's
+# year-index scheme covers ~2011+; older speeches/testimony use a legacy
+# archive not handled here (a documented gap, like pre-2011 Beige Books).
+_INDEX_URL_BUILDERS: dict[str, Callable[[int], str]] = {
+    DOC_FED_SPEECH: lambda y: f"/newsevents/speech/{y}-speeches.htm",
+    DOC_FED_TESTIMONY: lambda y: f"/newsevents/testimony/{y}-testimony.htm",
+}
+_INDEX_LINK_PATTERNS: dict[str, re.Pattern[str]] = {
+    DOC_FED_SPEECH: re.compile(r"/newsevents/speech/[a-z]+\d{8}[a-z]*\.htm", re.I),
+    DOC_FED_TESTIMONY: re.compile(r"/newsevents/testimony/[a-z]+\d{8}[a-z]*\.htm", re.I),
+}
+_URL_DATE_RE = re.compile(r"(\d{8})")
 
 
 @dataclass(frozen=True, slots=True)
@@ -256,6 +278,46 @@ async def _fetch_first(
     return None
 
 
+def extract_index_links(html: str, pattern: re.Pattern[str]) -> list[str]:
+    """Return the unique, sorted document links matching ``pattern``."""
+    return sorted(set(pattern.findall(html)))
+
+
+def _date_from_url(url: str) -> date | None:
+    m = _URL_DATE_RE.search(url)
+    if m is None:
+        return None
+    try:
+        return datetime.strptime(m.group(1), "%Y%m%d").date()
+    except ValueError:
+        return None
+
+
+async def discover_indexed_candidates(
+    client: FedTextClient,
+    doc_type: str,
+    start_d: date,
+    end_d: date,
+) -> list[TextCandidate]:
+    """Crawl per-year index pages to discover speech/testimony URLs in range."""
+    pattern = _INDEX_LINK_PATTERNS[doc_type]
+    build_index = _INDEX_URL_BUILDERS[doc_type]
+    found: list[TextCandidate] = []
+    for year in range(start_d.year, end_d.year + 1):
+        html = await client.fetch(build_index(year))
+        if html is None:
+            continue
+        for link in extract_index_links(html, pattern):
+            pub = _date_from_url(link)
+            if pub is None or not (start_d <= pub <= end_d):
+                continue
+            found.append(
+                TextCandidate(document_type=doc_type, urls=(link,), published_date=pub)
+            )
+    logger.info("  discovered %d %s documents", len(found), doc_type)
+    return found
+
+
 async def run_text_ingest(
     *,
     start: DateLike = "2000-01-01",
@@ -269,6 +331,8 @@ async def run_text_ingest(
     """Probe + ingest the requested Fed document types into ``text_documents``."""
     started_at = datetime.now(tz=UTC)
     end = end or date.today().isoformat()
+    start_d = _as_date(start)
+    end_d = _as_date(end)
 
     candidates = build_candidates(
         start=start,
@@ -277,8 +341,6 @@ async def run_text_ingest(
         db_path=db_path,
         calendar_path=calendar_path,
     )
-    if limit is not None:
-        candidates = candidates[:limit]
 
     audit_id = 0
     with connect(db_path) as conn:
@@ -303,6 +365,18 @@ async def run_text_ingest(
     try:
         if owns_client:
             await client_ctx.__aenter__()
+
+        # Index-crawled sources (speeches, testimony) are discovered live.
+        for doc_type in document_types:
+            if doc_type in INDEXED_DOC_TYPES:
+                candidates.extend(
+                    await discover_indexed_candidates(
+                        client_ctx, doc_type, start_d, end_d
+                    )
+                )
+        if limit is not None:
+            candidates = candidates[:limit]
+
         for cand in candidates:
             res = results[cand.document_type]
             doc = await _fetch_first(client_ctx, cand, res)
@@ -361,9 +435,13 @@ def _as_date(value: DateLike) -> date:
 
 __all__ = [
     "ALL_DOC_TYPES",
+    "CALENDAR_DOC_TYPES",
+    "INDEXED_DOC_TYPES",
     "TextCandidate",
     "TextIngestReport",
     "TextSourceResult",
     "build_candidates",
+    "discover_indexed_candidates",
+    "extract_index_links",
     "run_text_ingest",
 ]

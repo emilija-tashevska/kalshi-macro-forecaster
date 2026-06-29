@@ -12,11 +12,15 @@ from datetime import date
 from pathlib import Path
 
 from kalshi_train.data.ingest_text import (
+    _INDEX_LINK_PATTERNS,
     DOC_BEIGE_BOOK,
+    DOC_FED_SPEECH,
     DOC_FOMC_MINUTES,
     DOC_FOMC_STATEMENT,
     beige_book_url,
     build_candidates,
+    discover_indexed_candidates,
+    extract_index_links,
     fomc_minutes_url,
     fomc_statement_url,
     run_text_ingest,
@@ -210,6 +214,66 @@ async def test_run_text_ingest_is_idempotent(tmp_db: Path, tmp_path: Path) -> No
     with connect(tmp_db, read_only=True) as conn:
         count = conn.execute("SELECT COUNT(*) AS c FROM text_documents").fetchone()["c"]
     assert count == 3  # 1 statement + 1 minutes + 1 beige, not doubled
+
+
+_SPEECH_INDEX_HTML = """
+<html><body><div id="article">
+  <ul>
+    <li><a href="/newsevents/speech/powell20240315a.htm">Economic Outlook</a></li>
+    <li><a href="/newsevents/speech/waller20240620a.htm">Inflation and Policy</a></li>
+    <li><a href="/newsevents/speech/notadate.htm">Bio page (ignored)</a></li>
+  </ul>
+</div></body></html>
+"""
+
+_SPEECH_HTML = (
+    "<html><head><title>Speech</title></head><body><div id='article'>"
+    "<h3 class='title'>Economic Outlook</h3>"
+    + "<p>Inflation has moderated while the labor market stays resilient. "
+    "The Committee remains data dependent and prepared to adjust policy. </p>" * 8
+    + "</div></body></html>"
+)
+
+
+def test_extract_index_links_dedups_and_sorts() -> None:
+    links = extract_index_links(_SPEECH_INDEX_HTML, _INDEX_LINK_PATTERNS[DOC_FED_SPEECH])
+    assert links == [
+        "/newsevents/speech/powell20240315a.htm",
+        "/newsevents/speech/waller20240620a.htm",
+    ]  # the non-dated bio link is excluded
+
+
+async def test_discover_indexed_candidates_parses_dates() -> None:
+    client = _FakeFedClient({"/newsevents/speech/2024-speeches.htm": _SPEECH_INDEX_HTML})
+    cands = await discover_indexed_candidates(
+        client, DOC_FED_SPEECH, date(2024, 1, 1), date(2024, 12, 31)
+    )
+    dates = sorted(c.published_date for c in cands)
+    assert dates == [date(2024, 3, 15), date(2024, 6, 20)]
+    assert all(c.document_type == DOC_FED_SPEECH for c in cands)
+
+
+async def test_run_text_ingest_crawls_speeches(tmp_db: Path) -> None:
+    pages = {
+        "/newsevents/speech/2024-speeches.htm": _SPEECH_INDEX_HTML,
+        "/newsevents/speech/powell20240315a.htm": _SPEECH_HTML,
+        "/newsevents/speech/waller20240620a.htm": _SPEECH_HTML,
+    }
+    client = _FakeFedClient(pages)
+    report = await run_text_ingest(
+        start="2024-01-01",
+        end="2024-12-31",
+        document_types=[DOC_FED_SPEECH],
+        db_path=tmp_db,
+        client=client,
+    )
+    by_type = {r.document_type: r for r in report.results}
+    assert by_type[DOC_FED_SPEECH].stored == 2
+    with connect(tmp_db, read_only=True) as conn:
+        n = conn.execute(
+            "SELECT COUNT(*) AS c FROM text_documents WHERE document_type='fed_speech'"
+        ).fetchone()["c"]
+    assert n == 2
 
 
 async def test_fts_index_is_searchable(tmp_db: Path, tmp_path: Path) -> None:
