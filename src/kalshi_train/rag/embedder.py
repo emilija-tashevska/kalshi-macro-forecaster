@@ -7,11 +7,18 @@ list of texts and get back a list of equal-length float vectors.
 
 from __future__ import annotations
 
+import logging
+import time
 from typing import ClassVar, Protocol, runtime_checkable
 
 from kalshi_train.config import settings
 
-DEFAULT_BATCH = 128
+logger = logging.getLogger(__name__)
+
+DEFAULT_BATCH = 64
+_MAX_RETRIES = 6
+_BACKOFF_BASE = 2.0
+_INTER_BATCH_DELAY = 1.2  # pace requests to stay under free-tier TPM limits
 
 
 class EmbedderError(RuntimeError):
@@ -60,15 +67,36 @@ class OpenAIEmbedder:
             self._client = OpenAI(api_key=self._api_key)
         return self._client
 
+    def _embed_batch(self, client: object, batch: list[str]) -> list[list[float]]:
+        """Embed one batch, retrying with exponential backoff on 429/transient
+        errors (free-tier keys hit tokens-per-minute limits)."""
+        for attempt in range(_MAX_RETRIES):
+            try:
+                resp = client.embeddings.create(model=self.model, input=batch)  # type: ignore[attr-defined]
+            except Exception as exc:
+                if attempt == _MAX_RETRIES - 1:
+                    raise EmbedderError(f"Embedding failed after retries: {exc}") from exc
+                wait = _BACKOFF_BASE ** (attempt + 1)
+                logger.warning("Embedding batch error (%s); retrying in %.1fs", exc, wait)
+                time.sleep(wait)
+                continue
+            return [item.embedding for item in resp.data]
+        return []
+
     def embed(self, texts: list[str]) -> list[list[float]]:
         if not texts:
             return []
         client = self._ensure()
         out: list[list[float]] = []
-        for start in range(0, len(texts), self._batch_size):
-            batch = [t.replace("\n", " ") for t in texts[start : start + self._batch_size]]
-            resp = client.embeddings.create(model=self.model, input=batch)  # type: ignore[attr-defined]
-            out.extend(item.embedding for item in resp.data)
+        n_batches = (len(texts) + self._batch_size - 1) // self._batch_size
+        for i in range(n_batches):
+            batch = [
+                t.replace("\n", " ")
+                for t in texts[i * self._batch_size : (i + 1) * self._batch_size]
+            ]
+            out.extend(self._embed_batch(client, batch))
+            if i < n_batches - 1:
+                time.sleep(_INTER_BATCH_DELAY)
         return out
 
 

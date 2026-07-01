@@ -10,6 +10,7 @@ the simple ``Callable[[date], list[str]]`` the SFT builder consumes.
 
 from __future__ import annotations
 
+import logging
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 from datetime import UTC, date, datetime
@@ -20,6 +21,9 @@ import numpy as np
 from kalshi_train.db.connection import connect
 from kalshi_train.rag.chunk import chunk_text
 from kalshi_train.rag.embedder import Embedder
+
+logger = logging.getLogger(__name__)
+_DOC_BATCH = 40  # docs per embed+commit cycle, so long runs are resumable
 
 DateLike = date | datetime | str
 
@@ -72,49 +76,63 @@ def build_chunk_index(
             r[0] for r in conn.execute("SELECT DISTINCT doc_id FROM text_chunks").fetchall()
         }
 
-    pending_meta: list[dict[str, object]] = []
-    pending_text: list[str] = []
-    for d in docs:
-        if not rebuild and d["doc_id"] in existing:
-            continue
-        for idx, passage in enumerate(chunk_text(d["body"], chunk_chars=chunk_chars)):
-            pending_meta.append(
-                {
-                    "chunk_id": f"{d['doc_id']}:{idx}",
-                    "doc_id": d["doc_id"],
-                    "source": d["source"],
-                    "document_type": d["document_type"],
-                    "published_date": _as_iso_date(d["published_date"]),
-                    "chunk_index": idx,
-                    "text": passage,
-                }
-            )
-            pending_text.append(passage)
-
-    if not pending_text:
-        return 0
-
-    vectors = embedder.embed(pending_text)
-    now = _now_iso()
-    rows = [
-        (
-            m["chunk_id"], m["doc_id"], m["source"], m["document_type"],
-            m["published_date"], m["chunk_index"], m["text"],
-            _to_blob(vec), embedder.model, embedder.dim, now,
-        )
-        for m, vec in zip(pending_meta, vectors, strict=True)
-    ]
-    with connect(db_path) as conn:
-        if rebuild:
+    if rebuild:
+        with connect(db_path) as conn:
             conn.execute("DELETE FROM text_chunks")
-        conn.executemany(
-            "INSERT OR REPLACE INTO text_chunks (chunk_id, doc_id, source, "
-            "document_type, published_date, chunk_index, text, embedding, "
-            "embed_model, dim, ingested_at) VALUES (?,?,?,?,?,?,?,?,?,?,?)",
-            rows,
+            conn.commit()
+        existing = set()
+
+    todo = [d for d in docs if d["doc_id"] not in existing]
+    total_written = 0
+
+    # Process in doc-batches with a commit after each, so a long/rate-limited
+    # run is resumable: already-embedded docs are skipped on re-run.
+    for start in range(0, len(todo), _DOC_BATCH):
+        batch_docs = todo[start : start + _DOC_BATCH]
+        meta: list[dict[str, object]] = []
+        texts: list[str] = []
+        for d in batch_docs:
+            for idx, passage in enumerate(chunk_text(d["body"], chunk_chars=chunk_chars)):
+                meta.append(
+                    {
+                        "chunk_id": f"{d['doc_id']}:{idx}",
+                        "doc_id": d["doc_id"],
+                        "source": d["source"],
+                        "document_type": d["document_type"],
+                        "published_date": _as_iso_date(d["published_date"]),
+                        "chunk_index": idx,
+                        "text": passage,
+                    }
+                )
+                texts.append(passage)
+        if not texts:
+            continue
+
+        vectors = embedder.embed(texts)
+        now = _now_iso()
+        rows = [
+            (
+                m["chunk_id"], m["doc_id"], m["source"], m["document_type"],
+                m["published_date"], m["chunk_index"], m["text"],
+                _to_blob(vec), embedder.model, embedder.dim, now,
+            )
+            for m, vec in zip(meta, vectors, strict=True)
+        ]
+        with connect(db_path) as conn:
+            conn.executemany(
+                "INSERT OR REPLACE INTO text_chunks (chunk_id, doc_id, source, "
+                "document_type, published_date, chunk_index, text, embedding, "
+                "embed_model, dim, ingested_at) VALUES (?,?,?,?,?,?,?,?,?,?,?)",
+                rows,
+            )
+            conn.commit()
+        total_written += len(rows)
+        logger.info(
+            "embedded %d/%d docs (%d chunks so far)",
+            min(start + _DOC_BATCH, len(todo)), len(todo), total_written,
         )
-        conn.commit()
-    return len(rows)
+
+    return total_written
 
 
 @dataclass(frozen=True, slots=True)
