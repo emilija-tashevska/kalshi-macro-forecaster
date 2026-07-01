@@ -36,9 +36,14 @@ actually in the database. For the full plan and per-phase detail, see the
   chat examples from 146 Fed-cut meetings x 7 lookback horizons, soft
   calibrated targets, group-aware temporal split → `data/sft/*.jsonl`. All
   sanity checks pass (group-disjoint, no leakage, completions parse).
-- **Next:** Phase 5 (LoRA fine-tuning on the SFT dataset). Phase 4 also
-  remains the home for the market/calendar gaps when other targets are
-  added.
+- **RAG layer live**: the 1,596-doc corpus is embedded into `text_chunks`
+  (**28,561 chunks**, OpenAI `text-embedding-3-small`). The SFT dataset was
+  rebuilt **text-augmented** (`dataset build --with-text`): every prompt now
+  carries 4 point-in-time-safe Fed passages retrieved by semantic search
+  (only text published on/before each snapshot's as-of date).
+- **Next:** Phase 5 (LoRA fine-tuning on the text-augmented SFT dataset).
+  Phase 4 also remains the home for the market/calendar gaps when other
+  targets are added.
 
 ---
 
