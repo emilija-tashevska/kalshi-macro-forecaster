@@ -15,6 +15,9 @@ Available subcommands:
     kalshi-train train fed-cut [OPTIONS]                (Phase 2 XGBoost baseline)
     kalshi-train baseline llm [OPTIONS]                 (Phase 3 vanilla LLM baseline)
     kalshi-train dataset build [OPTIONS]                (Phase 4 SFT dataset)
+    kalshi-train rag build-index                        (Phase 4 embed corpus)
+    kalshi-train finetune train [--smoke]               (Phase 5 LoRA fine-tune)
+    kalshi-train finetune eval [OPTIONS]                (Phase 5 evaluate adapter)
 
 More subcommands arrive as we hit each phase.
 """
@@ -45,6 +48,9 @@ from kalshi_train.db.point_in_time import (
     pit_history,
     pit_value,
 )
+from kalshi_train.finetune.config import FinetuneConfig, smoke_config
+from kalshi_train.finetune.evaluate import run_finetune_eval
+from kalshi_train.finetune.train import run_finetune
 from kalshi_train.llm.client import LLMError, make_client
 from kalshi_train.rag.embedder import EmbedderError, OpenAIEmbedder
 from kalshi_train.rag.store import ChunkIndex, build_chunk_index, make_retriever
@@ -58,11 +64,13 @@ train_app = typer.Typer(add_completion=False, help="Model training commands.")
 baseline_app = typer.Typer(add_completion=False, help="Baseline evaluation commands.")
 dataset_app = typer.Typer(add_completion=False, help="Dataset construction commands.")
 rag_app = typer.Typer(add_completion=False, help="Retrieval (RAG) commands.")
+finetune_app = typer.Typer(add_completion=False, help="LoRA fine-tuning commands.")
 app.add_typer(ingest_app, name="ingest")
 app.add_typer(train_app, name="train")
 app.add_typer(baseline_app, name="baseline")
 app.add_typer(dataset_app, name="dataset")
 app.add_typer(rag_app, name="rag")
+app.add_typer(finetune_app, name="finetune")
 console = Console()
 
 
@@ -653,6 +661,85 @@ def dataset_build_cmd(
     console.print(f"[green]Output:[/green] {report.output_dir}")
     if not no_report:
         console.print(f"[green]Report:[/green] {report.report_path}")
+
+
+@finetune_app.command("train")
+def finetune_train_cmd(
+    smoke: bool = typer.Option(False, "--smoke", help="Tiny CPU smoke run (tiny-gpt2)."),
+    base_model: str | None = typer.Option(None, "--base-model", help="HF model id."),
+    epochs: float | None = typer.Option(None, "--epochs", help="Training epochs."),
+    lora_r: int | None = typer.Option(None, "--lora-r", help="LoRA rank."),
+    output: str | None = typer.Option(None, "--output", help="Adapter output dir."),
+    log_level: str = typer.Option("INFO", "--log-level", help="DEBUG/INFO/WARNING/ERROR."),
+) -> None:
+    """Phase 5 — LoRA fine-tune on the SFT dataset (needs the `finetune` extra + GPU).
+
+    Use ``--smoke`` to prove the pipeline runs locally on a tiny CPU model.
+    Real run example (on a GPU box)::
+
+        kalshi-train finetune train --base-model meta-llama/Llama-3.1-8B-Instruct
+    """
+    _configure_logging(log_level)
+    if smoke:
+        cfg = smoke_config(Path(output) if output else Path("models/smoke_lora"))
+    else:
+        cfg = FinetuneConfig()
+        if base_model:
+            cfg.base_model = base_model
+        if epochs is not None:
+            cfg.num_epochs = epochs
+        if lora_r is not None:
+            cfg.lora_r = lora_r
+        if output:
+            cfg.output_dir = Path(output)
+
+    try:
+        result = run_finetune(cfg)
+    except (ImportError, ModuleNotFoundError) as exc:
+        console.print(f"[red]finetune deps missing: `uv sync --extra finetune` ({exc})[/red]")
+        raise typer.Exit(code=2) from exc
+    except (RuntimeError, FileNotFoundError) as exc:
+        console.print(f"[red]{exc}[/red]")
+        raise typer.Exit(code=2) from exc
+
+    console.print(
+        f"[green]Trained[/green] {result.base_model} → {result.adapter_dir}\n"
+        f"train={result.n_train} eval={result.n_eval} steps={result.steps} "
+        f"loss={result.train_loss}"
+    )
+
+
+@finetune_app.command("eval")
+def finetune_eval_cmd(
+    adapter: str = typer.Option("models/fed_cut_lora", "--adapter", help="Adapter dir."),
+    base_model: str | None = typer.Option(None, "--base-model", help="Override base model."),
+    horizon: int = typer.Option(1, "--horizon", help="Lookback horizon to eval (days)."),
+    log_level: str = typer.Option("INFO", "--log-level", help="DEBUG/INFO/WARNING/ERROR."),
+) -> None:
+    """Evaluate a fine-tuned adapter on the held-out test meetings."""
+    _configure_logging(log_level)
+    try:
+        result = run_finetune_eval(
+            adapter_dir=Path(adapter), base_model=base_model, horizon=horizon
+        )
+    except (ImportError, ModuleNotFoundError) as exc:
+        console.print(f"[red]finetune deps missing: `uv sync --extra finetune` ({exc})[/red]")
+        raise typer.Exit(code=2) from exc
+    except (RuntimeError, FileNotFoundError) as exc:
+        console.print(f"[red]{exc}[/red]")
+        raise typer.Exit(code=2) from exc
+
+    table = Table(title=f"Phase 5 — fine-tuned eval (horizon {result.horizon}d)")
+    table.add_column("Model", style="cyan")
+    table.add_column("Brier", justify="right")
+    table.add_column("Log loss", justify="right")
+    for name, m in result.test_metrics.items():
+        table.add_row(name, f"{m.brier:.4f}", f"{m.log_loss:.4f}")
+    console.print(table)
+    console.print(
+        f"[bold]{result.n_examples}[/bold] test examples, "
+        f"{result.n_parse_failures} parse failures. Report: {result.report_path}"
+    )
 
 
 if __name__ == "__main__":
