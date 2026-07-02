@@ -304,6 +304,14 @@ Built *from data we already hold* — no new API key needed:
 
 **Learning checkpoint:** What a training loop actually looks like. LoRA math intuition. Early stopping. Mixed precision. The full modern HF training stack.
 
+**Status: ✓ PIPELINE COMPLETE + smoke-verified (awaiting a GPU run).**
+
+- ✓ `finetune/` package: run config (Llama-3.1-8B + 4-bit/LoRA defaults, plus a tiny-CPU smoke config), JSONL loader with a model-agnostic **completion-only** response template, a `transformers`+`peft` LoRA trainer (manual prompt-masking → loss only on the forecast), and an evaluator that generates probabilities on the held-out test meetings and scores them vs the baselines with a reliability plot.
+- ✓ Heavy ML imports are lazy, so the data/format logic is torch-free + unit-tested (6 tests).
+- ✓ **CPU smoke run verified end-to-end** (tiny-gpt2): trains a LoRA adapter and runs the eval/generation loop. Generation respects the model's context window.
+- ✓ CLI: `kalshi-train finetune train [--smoke]` and `kalshi-train finetune eval`.
+- ⏳ **Real run needs a GPU** (`uv sync --extra finetune`): `kalshi-train finetune train --base-model meta-llama/Llama-3.1-8B-Instruct`, then `kalshi-train finetune eval`.
+
 **Exit criterion:** A fine-tuned adapter beats the vanilla LLM on Brier and log loss on the test set. Report at `reports/phase5_finetune.md`.
 
 ---

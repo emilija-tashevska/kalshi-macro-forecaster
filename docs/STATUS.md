@@ -41,9 +41,12 @@ actually in the database. For the full plan and per-phase detail, see the
   rebuilt **text-augmented** (`dataset build --with-text`): every prompt now
   carries 4 point-in-time-safe Fed passages retrieved by semantic search
   (only text published on/before each snapshot's as-of date).
-- **Next:** Phase 5 (LoRA fine-tuning on the text-augmented SFT dataset).
-  Phase 4 also remains the home for the market/calendar gaps when other
-  targets are added.
+- **Phase 5 (LoRA fine-tuning) pipeline built + smoke-verified** on CPU
+  (tiny-gpt2): `finetune train` / `finetune eval`, completion-only masking,
+  reliability plot. The real run needs a GPU (`--extra finetune`,
+  Llama-3.1-8B) — that's the one remaining step to get the fine-tuned
+  numbers into `reports/phase5_finetune.md`.
+- **Next:** run Phase 5 on a GPU box, then Phase 6 (ensembling/calibration).
 
 ---
 
@@ -62,7 +65,9 @@ actually in the database. For the full plan and per-phase detail, see the
 | 2 | XGBoost Fed-cut baseline | ✅ | ✅ | ✅ trained — see report* |
 | 3 | Vanilla LLM baseline | ✅ | ✅ | ✅ ran (Claude Sonnet 4.6)* |
 | 4 | SFT dataset construction | ✅ | ✅ | ✅ 1,022 examples (Fed-cut) |
-| 4.5+ | Continued pretrain, LoRA SFT, ensemble, trading | ⬜ | ⬜ | — |
+| 4 (RAG) | Embed corpus + text-augment prompts | ✅ | ✅ | ✅ 28,561 chunks |
+| 5 | LoRA fine-tuning pipeline | ✅ | ✅ | ⏳ needs GPU (smoke-verified) |
+| 6+ | Ensemble, paper trading, live monitoring | ⬜ | ⬜ | — |
 
 Legend: ✅ done · ⬜ not started · ❌ not yet populated
 
@@ -154,9 +159,9 @@ machine manually; never commit them.
 
 ## Quality
 
-- **Tests:** 126 unit tests passing; 4 integration tests auto-skip without
+- **Tests:** 138 unit tests passing; 4 integration tests auto-skip without
   network/keys. Run: `uv run pytest -m "not integration"`.
-- **Lint/types:** `ruff` and `mypy --strict` both clean across 51 source
+- **Lint/types:** `ruff` and `mypy --strict` both clean across 60 source
   files.
 - **Toolchain note:** the local venv uses Python 3.14 via `uv`. `xgboost`
   requires the `libomp` system library (`brew install libomp`) for the
